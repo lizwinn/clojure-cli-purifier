@@ -11,7 +11,6 @@
 # the year 2100, so the resolver never asks a remote repository for a newer
 # version list.
 {
-  runCommand,
   # The functions of the shared purifier library.
   purifier,
   # The lock in memory, from read-lock.nix and checkLock.
@@ -26,10 +25,6 @@
 purifier.tree (
   fetchers
   // {
-    # `tree` builds its derivation with runCommand from this set.
-    pkgs = {
-      inherit runCommand;
-    };
     name = "clojure-cli-purifier-repository";
     entries = builtins.filter (entry: !(entry ? git)) (purifier.entriesFor system lock);
   }
