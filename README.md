@@ -146,10 +146,6 @@ JDK and the Clojure CLI come from the store. `.clojure-cli-purifier/env` is
 a garbage-collector root, so `nix-collect-garbage` keeps the downloads
 while it exists.
 
-The `conformance-offline` check runs the tests, a SNAPSHOT, a version range
-and an uberjar build of a fixture after a prefetch, in the Nix sandbox,
-which has no network.
-
 ## Editor
 
 [clojure-lsp](https://clojure-lsp.io) computes the classpath with
@@ -243,25 +239,75 @@ buildClojureCliProject {
 
 ## Examples
 
-CI locks and builds [honeysql](https://github.com/seancorfield/honeysql)
-at commit `1cc6bbe`, as an example of a library with git dependencies and
-a test suite. Its lockfile lies in `tests/real-world/honeysql`, outside
-honeysql's source. The `real-world-honeysql` check builds the library and
-runs its tests in the sandbox, and the `conformance-relock` CI job relocks
-it.
+### honeysql
 
-On one machine, through Google's Maven Central mirror, locking honeysql
-took 67 seconds and included its test run, and a relock after a dependency
-change took 78 seconds. honeysql's `build.clj` runs under babashka, so its
-lock names `--test '-X:test'` and no build.
+[honeysql](https://github.com/seancorfield/honeysql) turns Clojure data
+into SQL. The build script of the project runs under babashka, so it has no
+Clojure CLI build, and its tests run with `clojure -X:test`. This example
+keeps the lockfile beside your own flake, so the source of honeysql stays
+as its author publishes it.
 
-The fixtures in `tests/fixtures` are small examples of the other cases:
-Maven Central and Clojars dependencies, a local dependency, git
-dependencies by tag and short sha, a version range, a SNAPSHOT, and a
-repository with several projects.
+Clone the library, and lock it with the test command:
 
-This section names a few projects that CI uses. It is not a list of the
-projects the purifier has been tried on or works with.
+```zsh
+git clone https://github.com/seancorfield/honeysql
+cd honeysql
+nix run github:nix-purifiers/clojure-cli-purifier -- lock --test '-X:test' --lockfile ../honeysql.lock.json
+```
+
+Prefetch the downloads, and run the tests with no network:
+
+```zsh
+export CLOJURE_CLI_PURIFIER_LOCKFILE="$PWD/../honeysql.lock.json"
+nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
+export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+clojure -X:test
+```
+
+Then build and test it with Nix, from a flake next to `honeysql.lock.json`:
+
+```nix
+{
+  inputs.clojure-cli-purifier.url = "github:nix-purifiers/clojure-cli-purifier";
+  inputs.nixpkgs.follows = "clojure-cli-purifier/nixpkgs";
+  inputs.honeysql = {
+    url = "github:seancorfield/honeysql";
+    flake = false;
+  };
+
+  outputs = { nixpkgs, clojure-cli-purifier, honeysql, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      project = clojure-cli-purifier.lib.clojure-cli-purifier.buildClojureCliProject {
+        inherit pkgs;
+        src = honeysql;
+        lockFile = ./honeysql.lock.json;
+      };
+    in
+    {
+      checks.${system}.honeysql = project.tests;
+    };
+}
+```
+
+`nix flake check` builds honeysql and runs its tests in the sandbox. After
+a change to the `deps.edn` of honeysql, run `lock` again with the same
+`--lockfile`. The command `nix flake update honeysql` moves the flake to a
+newer honeysql.
+
+### A library with a build script
+
+A project whose `build.clj` has the usual `jar` function, run through
+`clojure -T:build`, locks without extra options:
+
+```zsh
+nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build jar' --test '-M:test'
+```
+
+Its flake is the one in the Quickstart. `project.packages.<name>` holds the
+jar and the POM, and `project.release` is what
+`clojure-cli-purifier publish` uploads to Clojars.
 
 ## Credits
 
