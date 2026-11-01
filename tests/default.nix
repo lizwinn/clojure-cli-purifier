@@ -43,9 +43,46 @@ let
         inherit lockFile;
       }).package.drvPath
     ).success;
+  lock = import ../nix/lib/lock.nix { lockFile = ./fixtures/hello/clojure-cli-purifier.lock.json; };
 in
 {
   inherit cli;
+
+  # The functions the lock run uses to read and write files, and the helper
+  # it runs on the tools jar of the Clojure CLI.
+  unit =
+    pkgs.runCommand "unit"
+      {
+        nativeBuildInputs = with pkgs; [
+          jq
+          gawk
+          gnugrep
+          findutils
+          coreutils
+        ];
+        LIB_SH = ../pkgs/clojure-cli-purifier/lib.sh;
+        HELPER = ../pkgs/clojure-cli-purifier/helper.clj;
+        TOOLS_JAR = "${cli.clojure}/libexec/clojure-tools-${cli.clojure.version}.jar";
+        JAVA = "${cli.jdk}/bin/java";
+      }
+      ''
+        bash ${./unit.sh}
+        touch $out
+      '';
+
+  # The store names of fetched files and checkouts.
+  nix-lib =
+    assert lock.storeName "hello-1.0.0.jar" == "hello-1.0.0.jar";
+    assert lock.storeName "a b@c$d.jar" == "a_b_c_d.jar";
+    assert lock.storeName "..hidden" == "hidden";
+    assert lock.storeName "..." == "file";
+    assert builtins.stringLength (lock.storeName (pkgs.lib.concatStrings (pkgs.lib.replicate 300 "x"))) == 200;
+    assert
+      lock.checkoutName {
+        path = "libs/io.github.clojure/tools.build/deedd623574e3712687a657691c6b79f5026b3a1";
+        git.rev = "deedd623574e3712687a657691c6b79f5026b3a1";
+      } == "tools.build-deedd623574e";
+    pkgs.runCommand "nix-lib" { } "touch $out";
 
   hello = hello.package;
 
@@ -121,6 +158,21 @@ in
     });
     assert refuses (helloLockWith {
       version = 0;
+    });
+    # A lockfile that lost a field, or one of another program.
+    assert refuses (
+      builtins.toFile "clojure-cli-purifier.lock.json" (
+        builtins.toJSON (
+          removeAttrs (builtins.fromJSON (builtins.readFile ./fixtures/hello/clojure-cli-purifier.lock.json)) [
+            "artifacts"
+          ]
+        )
+      )
+    );
+    assert refuses (builtins.toFile "clojure-cli-purifier.lock.json" ''{ "packages": {} }'');
+    # A lockfile for another directory of the source root.
+    assert refuses (helloLockWith {
+      projectDir = "elsewhere";
     });
     pkgs.runCommand "stale-lock-refused" { } "touch $out";
 }

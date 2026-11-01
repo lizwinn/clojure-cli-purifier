@@ -120,7 +120,7 @@ let
 
   project = lock.project;
 
-  clojureCommands = lib.concatMapStringsSep "\n" (args: "clojure ${lib.escapeShellArgs args}");
+  clojureCommands = lib.concatMapStringsSep "\n" (args: "purifierClojure ${lib.escapeShellArgs args}");
 
   javaDirectory = "share/java";
   outputFile = package: output: "${package}/${javaDirectory}/${baseNameOf output.path}";
@@ -175,7 +175,20 @@ let
       export JAVA_OPTS="$CLJ_JVM_OPTS"
       export JAVA_CMD=${jdk'}/bin/java
       export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-      clojure -X:deps prep
+      # Runs the Clojure CLI. When it fails to resolve a download, the
+      # lockfile lacks that download, and the message says how to renew it.
+      purifierClojure() {
+        if clojure "$@" > >(tee "$TMPDIR/clojure.log") 2>&1; then
+          return 0
+        fi
+        if grep -qE 'could not be resolved|Could not transfer|Could not find artifact|Unable to clone|Network is unreachable' "$TMPDIR/clojure.log"; then
+          echo "clojure-cli-purifier: the Clojure CLI tried to download something ${toString lockFile} does not hold. Run clojure-cli-purifier lock --force in the project, which records every download again." >&2
+        fi
+        return 1
+      }
+      # Git dependencies that need preparing are prepared for the aliases
+      # the lock prepared, as the lock run did.
+      purifierClojure -X:deps prep :aliases ${lib.escapeShellArg "[${lib.concatStringsSep " " lock.prepared}]"}
     '';
     buildPhase = ''
       runHook preBuild

@@ -1,0 +1,5 @@
+;; The deploy tool `clojure-cli-purifier publish` runs. Its lockfile is made
+;; with `clojure-cli-purifier lock`, so the package builds its classpath
+;; offline, and publishing downloads nothing.
+{:deps {org.clojure/clojure {:mvn/version "1.12.3"}
+        slipset/deps-deploy {:mvn/version "0.2.2"}}}

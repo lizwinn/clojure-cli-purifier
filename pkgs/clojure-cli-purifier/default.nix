@@ -7,6 +7,8 @@
 # installation it runs on.
 {
   writeShellApplication,
+  runCommand,
+  callPackage,
   clojure,
   # The JVM of the Clojure CLI. The lock records its version, and the Nix
   # build runs on a JDK of the same major version.
@@ -27,6 +29,38 @@
 let
   jdk = jdk_headless;
   clojure' = clojure.override { inherit jdk; };
+
+  # The classpath of the deploy tool, resolved offline from its lockfile,
+  # which `clojure-cli-purifier lock` made in deploy/. The classpath names
+  # files of the local repository under $out, a link to the repository in
+  # the store, so the classpath file keeps the repository alive.
+  # The command that makes the lockfile is this package, so a checkout
+  # without it still builds, with a publish step that says why it cannot
+  # run.
+  deployLock = ./deploy + "/clojure-cli-purifier.lock.json";
+  hasDeployLock = builtins.pathExists deployLock;
+  deployRepository = callPackage ../../nix/lib/repository.nix {
+    lockFile = deployLock;
+  };
+  deployClasspath =
+    runCommand "clojure-cli-purifier-deploy-classpath"
+      {
+        nativeBuildInputs = [
+          clojure'
+          jdk
+        ];
+      }
+      ''
+        mkdir -p $out/home/.m2 "$TMPDIR/project" "$TMPDIR/config" "$TMPDIR/java-tmp"
+        ln -s ${deployRepository} $out/home/.m2/repository
+        cp ${./deploy/deps.edn} "$TMPDIR/project/deps.edn"
+        echo '{}' >"$TMPDIR/config/deps.edn"
+        export HOME="$TMPDIR" CLJ_CONFIG="$TMPDIR/config" CLJ_CACHE="$TMPDIR/cache" GITLIBS="$TMPDIR/gitlibs"
+        export CLJ_JVM_OPTS="-Duser.home=$out/home -Djava.io.tmpdir=$TMPDIR/java-tmp"
+        export JAVA_CMD=${jdk}/bin/java
+        cd "$TMPDIR/project"
+        clojure -Spath >$out/classpath
+      '';
 in
 writeShellApplication {
   name = "clojure-cli-purifier";
@@ -49,13 +83,15 @@ writeShellApplication {
     PURIFIER_HELPER = ./helper.clj;
     PURIFIER_TOOLS_JAR = "${clojure'}/libexec/clojure-tools-${clojure'.version}.jar";
     PURIFIER_NIXPKGS = "${path}";
+    PURIFIER_DEPLOY_CLASSPATH = if hasDeployLock then "${deployClasspath}/classpath" else "";
   };
   text = ''
     export JAVA_CMD=''${JAVA_CMD:-${jdk}/bin/java}
   ''
+  + builtins.readFile ./lib.sh
   + builtins.readFile ./clojure-cli-purifier.sh;
   passthru = {
-    inherit jdk;
+    inherit jdk deployClasspath;
     clojure = clojure';
   };
 }

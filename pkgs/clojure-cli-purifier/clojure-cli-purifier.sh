@@ -16,7 +16,7 @@ usage() {
 Usage:
   clojure-cli-purifier lock [--force] [--build ARGS]... [--test ARGS]...
                             [--alias :NAME]... [--user-aliases]
-                            [--source DIR]
+                            [--source DIR] [--mirror ID=URL]...
       Runs the project with an empty local Maven repository and an empty
       gitlibs directory, and records every file the Clojure CLI downloads,
       the outputs of the build commands and the commands themselves in
@@ -36,6 +36,12 @@ Usage:
                      dependencies outside it, such as the root of a
                      repository with several projects. The Nix build takes
                      it as src. The default is the project root.
+      --mirror ID=URL
+                     Downloads the files of the repository ID, such as
+                     central, from a mirror at URL during the lock run.
+                     The lockfile names each such file by its URL in the
+                     repository, with the mirror as a fallback. It may
+                     repeat.
 
       Each option replaces its part of an existing lockfile, and a relock
       keeps every part no option names. Without options or --force, an
@@ -72,51 +78,6 @@ projectRoot() {
   die "no deps.edn in $(pwd) or above it"
 }
 
-# A path of the project directory, relative to the source root.
-inProject() {
-  local projectDir=$1 file=$2
-  if [ "$projectDir" = . ]; then echo "$file"; else echo "$projectDir/$file"; fi
-}
-
-# The files that decide what the project resolves, relative to the source
-# root: the deps.edn and build.clj of the project, and the deps.edn of
-# every other directory of the source root, which a local dependency may
-# be.
-definitionFiles() {
-  local sourceRoot=$1 projectDir=$2 depsEdn
-  depsEdn=$(inProject "$projectDir" deps.edn)
-  echo "$depsEdn"
-  if [ -f "$sourceRoot/$(inProject "$projectDir" build.clj)" ]; then inProject "$projectDir" build.clj; fi
-  (
-    cd "$sourceRoot" || exit
-    find . \( -name target -o -name .cpcache -o -name .git -o -name node_modules \) -prune \
-      -o -name deps.edn -type f -printf '%P\n' | grep -vxF "$depsEdn" | LC_ALL=C sort || true
-  )
-}
-
-# The SHA-256 of the given files of the source root, in that order, in
-# hex. The Nix builder hashes the same files in the same order.
-definitionHash() {
-  local sourceRoot=$1 file
-  shift
-  for file in "$@"; do
-    if [ -f "$sourceRoot/$file" ]; then cat "$sourceRoot/$file"; fi
-  done | sha256sum | cut -d' ' -f1
-}
-
-# The directory of the project relative to its source root, as the
-# lockfile records it.
-lockProjectDir() {
-  jq -r '.projectDir // "."' "$1"
-}
-
-# The source root of a project root, by the project directory the lockfile
-# records.
-sourceRootOf() {
-  local root=$1 projectDir=$2
-  if [ "$projectDir" = . ]; then echo "$root"; else echo "${root%/"$projectDir"}"; fi
-}
-
 clojureVersion() {
   clojure --version | sed -n 's/^Clojure CLI version //p'
 }
@@ -141,72 +102,9 @@ lockIsCurrent() {
     [ "$(jq -r .clojureVersion "$lockFile")" = "$(clojureVersion)" ]
 }
 
-# Writes settings.xml for the lock run. A settings.xml of the user brings
-# its proxies, mirrors and repository credentials. Without one, the proxy
-# of https_proxy applies, because Maven Resolver reads no proxy from the
-# environment.
-writeSettings() {
-  local m2=$1 realHome=$2 proxy rest auth hostport host port user pass
-  mkdir -p "$m2"
-  if [ -f "$realHome/.m2/settings.xml" ]; then
-    cp "$realHome/.m2/settings.xml" "$m2/settings.xml"
-    return
-  fi
-  proxy=${https_proxy:-${HTTPS_PROXY:-}}
-  [ -n "$proxy" ] || return 0
-  rest=${proxy#*://}
-  auth=
-  if [[ $rest == *@* ]]; then
-    auth=${rest%%@*}
-    rest=${rest#*@}
-  fi
-  hostport=${rest%%/*}
-  host=${hostport%%:*}
-  port=${hostport##*:}
-  if [ "$port" = "$hostport" ]; then port=80; fi
-  user=${auth%%:*}
-  pass=${auth#*:}
-  {
-    echo '<settings><proxies><proxy><id>environment</id><active>true</active>'
-    echo "<protocol>http</protocol><host>$host</host><port>$port</port>"
-    if [ -n "$auth" ]; then echo "<username>$user</username><password>$pass</password>"; fi
-    echo '<nonProxyHosts>localhost|127.0.0.1</nonProxyHosts></proxy></proxies></settings>'
-  } >"$m2/settings.xml"
-}
-
-# Prints "<id>\t<url>" for each mirror of a settings.xml.
-mirrors() {
-  [ -f "$1" ] || return 0
-  awk '
-    /<mirror>/ { inside = 1; id = ""; url = "" }
-    inside && /<id>/ { id = $0; gsub(/.*<id>|<\/id>.*/, "", id) }
-    inside && /<url>/ { url = $0; gsub(/.*<url>|<\/url>.*/, "", url) }
-    /<\/mirror>/ { print id "\t" url; inside = 0 }
-  ' "$1"
-}
-
-# Prints the id of the repository a file of a local repository directory
-# came from, as its _remote.repositories file records it, or nothing.
-remoteId() {
-  awk -F'>' -v file="$2" '$1 == file { sub(/=$/, "", $2); print $2; exit }' \
-    "$1/_remote.repositories" 2>/dev/null || true
-}
-
-# Prints a JSON list of command lines, each a list of words, from command
-# lines given as strings. Each splits into words the way the shell splits
-# an unquoted word.
-commandsJson() {
-  local line
-  local -a words
-  for line in "$@"; do
-    read -ra words <<<"$line"
-    printf '%s\n' "${words[@]}" | jq -R . | jq -sc .
-  done | jq -sc .
-}
-
 cmdLock() {
   local force=0 userAliases="" source=""
-  local -a builds=() tests=() aliases=()
+  local -a builds=() tests=() aliases=() mirrorSpecs=()
   while [ $# -gt 0 ]; do
     case $1 in
     --force) force=1 ;;
@@ -227,6 +125,11 @@ cmdLock() {
       ;;
     --user-aliases) userAliases=true ;;
     --no-user-aliases) userAliases=false ;;
+    --mirror)
+      if [ $# -lt 2 ] || [[ $2 != *=* ]]; then die "lock: --mirror takes ID=URL"; fi
+      mirrorSpecs+=("$2")
+      shift
+      ;;
     --source)
       [ $# -ge 2 ] || die "lock: --source takes a directory"
       source=$2
@@ -319,6 +222,7 @@ cmdLock() {
   userConfig="${CLJ_CONFIG:-${XDG_CONFIG_HOME:-$realHome/.config}/clojure}"
   if [ -z "${CLJ_CONFIG:-}" ] && [ ! -d "$userConfig" ]; then userConfig="$realHome/.clojure"; fi
   writeSettings "$work/home/.m2" "$realHome"
+  addMirrors "$work/home/.m2/settings.xml" "${mirrorSpecs[@]}"
   echo '{}' >"$work/config/deps.edn"
   export HOME="$work/home"
   export CLJ_CONFIG="$work/config"
@@ -342,13 +246,16 @@ cmdLock() {
   fi
 
   echo "clojure-cli-purifier: locking $root"
+  # Each step runs in a subshell whose output goes to the log, and the
+  # caller tests its status with ||, which turns off errexit inside it. So
+  # every command in a step exits the step itself when it fails.
   local alias log="$work/log"
   : >"$log"
   (
-    cd "$project" || exit
-    clojure -P
+    cd "$project" || exit 1
+    clojure -P || exit 1
     for alias in "${prepare[@]}"; do
-      clojure -P "-M$alias"
+      clojure -P "-M$alias" || exit 1
     done
   ) 2>&1 | tee -a "$log" || die "preparing the project failed; see the output above"
   # A POM can choose dependencies by architecture, through a profile that
@@ -361,10 +268,10 @@ cmdLock() {
     [ "$otherArch" != "$thisArch" ] || continue
     local archOpts="$CLJ_JVM_OPTS -Dos.arch=$otherArch"
     (
-      cd "$project" || exit
-      CLJ_JVM_OPTS=$archOpts clojure -Sforce -P
+      cd "$project" || exit 1
+      CLJ_JVM_OPTS=$archOpts clojure -Sforce -P || exit 1
       for alias in "${prepare[@]}"; do
-        CLJ_JVM_OPTS=$archOpts clojure -Sforce -P "-M$alias"
+        CLJ_JVM_OPTS=$archOpts clojure -Sforce -P "-M$alias" || exit 1
       done
     ) 2>&1 | tee -a "$log" || die "preparing the project for $otherArch failed; see the output above"
   done
@@ -372,12 +279,12 @@ cmdLock() {
     # The aliases of the user deps.edn resolve with it, in a cache of their
     # own.
     (
-      cd "$project" || exit
+      cd "$project" || exit 1
       export CLJ_CONFIG="$work/user-config"
       mkdir -p "$CLJ_CONFIG"
       cp "$userConfig/deps.edn" "$CLJ_CONFIG/deps.edn"
       for alias in "${userPrepare[@]}"; do
-        CLJ_CACHE="$work/user-cache" clojure -Sforce -P "-M$alias"
+        CLJ_CACHE="$work/user-cache" clojure -Sforce -P "-M$alias" || exit 1
       done
     ) 2>&1 | tee -a "$log" || die "preparing the user aliases failed; see the output above"
   fi
@@ -458,12 +365,12 @@ cmdLock() {
   touch "$stamp"
   sleep 1
   (
-    cd "$project" || exit
-    clojure -X:deps prep :aliases "[${prepare[*]}]"
+    cd "$project" || exit 1
+    clojure -X:deps prep :aliases "[${prepare[*]}]" || exit 1
     while IFS= read -r command; do
       mapfile -t words < <(jq -r '.[]' <<<"$command")
       echo "clojure-cli-purifier: clojure ${words[*]}"
-      clojure "${words[@]}"
+      clojure "${words[@]}" || exit 1
     done < <(jq -c '.[]' <<<"$buildJson" && jq -c '.[]' <<<"$testJson")
   ) 2>&1 | tee -a "$log" || die "the build failed; see the output above"
 
@@ -499,11 +406,12 @@ cmdLock() {
   # The repositories the downloads came from, by the id Maven Resolver
   # records: those of every basis the Clojure CLI wrote, and the mirrors of
   # settings.xml.
-  declare -A repositoryUrl
-  local id
-  while IFS=$'\t' read -r id url; do
+  declare -A repositoryUrl mirrorOf
+  local id of
+  while IFS=$'\t' read -r id url of; do
     if [[ $url != */ ]]; then url="$url/"; fi
     repositoryUrl[$id]=$url
+    if [ -n "$of" ]; then mirrorOf[$id]=$of; fi
   done < <(
     mapfile -t bases < <(find "$project/.cpcache" "$work/cache" "$work/user-cache" -name '*.basis' 2>/dev/null)
     if [ ${#bases[@]} -gt 0 ]; then helper repos "${bases[@]}"; fi
@@ -566,8 +474,17 @@ cmdLock() {
       unknown+=("$rel (repository $id)")
       continue
     fi
-    jq -cn --arg path "$rel" --arg url "$url$dir/$remote" --arg hash "$(nix-hash --type sha256 --flat --sri "$m2/$rel")" \
-      '{ path: $path, url: $url, mirrors: [], hash: $hash }' >>"$artifacts"
+    # A file a mirror of one repository served is locked at the URL of that
+    # repository, with the mirror as its fallback.
+    local mirror=""
+    of=${mirrorOf[$id]:-}
+    if [ -n "$of" ] && [ -n "${repositoryUrl[$of]:-}" ]; then
+      mirror="$url$dir/$remote"
+      url=${repositoryUrl[$of]}
+    fi
+    jq -cn --arg path "$rel" --arg url "$url$dir/$remote" --arg mirror "$mirror" \
+      --arg hash "$(nix-hash --type sha256 --flat --sri "$m2/$rel")" \
+      '{ path: $path, url: $url, mirrors: (if $mirror == "" then [] else [$mirror] end), hash: $hash }' >>"$artifacts"
   done < <(cd "$m2" && find . -type f -printf '%P\n' | LC_ALL=C sort)
 
   if [ ${#untracked[@]} -gt 0 ]; then
@@ -710,21 +627,23 @@ cmdPublish() {
   jar="$package/share/java/$name-$version.jar"
   pom="$package/share/java/$name-$version.pom"
 
-  local -a deploy=(clojure -Sdeps '{:deps {slipset/deps-deploy {:mvn/version "0.2.2"}}}'
-    -X deps-deploy.deps-deploy/deploy :installer :remote :sign-releases? false
-    :artifact "\"$jar\"" :pom-file "\"$pom\"")
+  # deps-deploy runs on the classpath the package resolved from its own
+  # lockfile, so publishing downloads nothing and only uploads.
+  local options="{:installer :remote :sign-releases? false :artifact \"$jar\" :pom-file \"$pom\""
   if [ -n "$repository" ]; then
-    # The repository map is one EDN argument.
-    deploy+=(:repository "{\"${repository%%=*}\" {:url \"${repository#*=}\"}}")
+    options="$options :repository {\"${repository%%=*}\" {:url \"${repository#*=}\"}}"
   fi
+  options="$options}"
+  local expression="(require 'deps-deploy.deps-deploy) (deps-deploy.deps-deploy/deploy $options) (shutdown-agents)"
+  [ -n "$PURIFIER_DEPLOY_CLASSPATH" ] ||
+    die "this clojure-cli-purifier was built without the lockfile of its deploy tool; run clojure-cli-purifier lock in pkgs/clojure-cli-purifier/deploy of its source"
   if [ $dryRun = 1 ]; then
     echo "jar: $jar"
     echo "pom: $pom"
-    printf '%q ' "${deploy[@]}"
-    echo
+    echo "deploy: $options"
     return
   fi
-  "${deploy[@]}"
+  "$JAVA_CMD" -cp "$(cat "$PURIFIER_DEPLOY_CLASSPATH")" clojure.main -e "$expression"
 }
 
 case ${1:-} in
