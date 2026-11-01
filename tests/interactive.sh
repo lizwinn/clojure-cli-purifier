@@ -151,9 +151,12 @@ test "$("$jq" -r '.gitRepos[0].tags.v1' "$lock")" = "$one"
 built=$(nix build --no-link --print-out-paths --impure --expr "
   let
     flake = builtins.getFlake \"git+file://$root\";
+    pkgs = import flake.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ flake.overlays.default ];
+    };
   in
-  (flake.lib.clojure-cli-purifier.buildClojureCliProject {
-    pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
+  (pkgs.buildClojureCliProject {
     src = /. + \"$app\";
     fetchers.fetchgit = args: builtins.fetchGit {
       inherit (args) url rev;

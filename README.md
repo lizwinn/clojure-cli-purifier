@@ -19,7 +19,17 @@ commit `clojure-cli-purifier.lock.json`:
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
 ```
 
-Then build it with the library of the flake:
+The flake's `overlays.default` adds `buildClojureCliProject` to a package
+set, where nixpkgs keeps its own builders. A package takes the builder by
+name:
+
+```nix
+# package.nix
+{ buildClojureCliProject }:
+buildClojureCliProject { src = ./.; }
+```
+
+The flake applies the overlay and builds the package:
 
 ```nix
 {
@@ -29,11 +39,11 @@ Then build it with the library of the flake:
   outputs = { nixpkgs, clojure-cli-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      project = clojure-cli-purifier.lib.clojure-cli-purifier.buildClojureCliProject {
-        inherit pkgs;
-        src = ./.;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ clojure-cli-purifier.overlays.default ];
       };
+      project = pkgs.callPackage ./package.nix { };
     in
     {
       packages.${system}.default = project.packages.hello;
@@ -42,9 +52,11 @@ Then build it with the library of the flake:
 }
 ```
 
-`buildClojureCliProject` takes these arguments:
+`buildClojureCliProject` is a package for `callPackage`. It takes the
+packages it needs from the package set by name, and
+`buildClojureCliProject.override` replaces any of them. Its own arguments
+are these:
 
-- `pkgs` is the package set the build runs with.
 - `src` is the project root, or the source root the lock was made with.
 - `projectDir` names the directory of the project in `src`. It is `"."` by
   default, and it must match the lockfile.
@@ -89,7 +101,7 @@ change. The flake passes the lockfile as `lockFile`. Every command takes
 `CLOJURE_CLI_PURIFIER_LOCKFILE`, which a dev shell can set to the same
 path. The flag takes precedence over the variable.
 
-## Everyday loop
+## Development loop
 
 `clojure-cli-purifier prefetch` builds the downloads of the lockfile into
 the Nix store, and links `.clojure-cli-purifier/bin/clojure` beside the
@@ -122,9 +134,8 @@ the named ones:
 clojure-cli-purifier update org.clojure/core.memoize
 ```
 
-The Clojure CLI has no update command of its own. A version that deps.edn
-names exactly changes when deps.edn does, and a git dependency changes
-when its `:git/sha` does.
+A version that deps.edn names exactly changes when deps.edn does, and a
+git dependency changes when its `:git/sha` does.
 
 The user `deps.edn` stays in effect. `lock --user-aliases` also locks its
 aliases, so that tools kept there, such as an nREPL alias, run offline too.
@@ -137,7 +148,7 @@ Clojars, with `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`.
 credentials of the server of the same id in `~/.m2/settings.xml`.
 `--dry-run` prints what it would deploy.
 
-## Offline work
+## Working offline
 
 After a prefetch, `clojure` needs no network. The Maven repository and the
 gitlibs directory under `.clojure-cli-purifier` hold exactly the locked
@@ -162,7 +173,7 @@ the classpath, and `.lsp/config.edn` points it at `deps.edn`:
 clojure-lsp analyzes the jars on the classpath, which hold the Clojure
 sources, and needs no other download.
 
-## Errors and fixes
+## Troubleshooting
 
 | Message | Fix |
 | --- | --- |
@@ -178,7 +189,7 @@ sources, and needs no other download.
 The builder refuses an invalid lockfile at evaluation, and the commands
 refuse it before they run anything.
 
-## Sources supported and refused
+## Supported language repositories
 
 `clojure-cli-purifier lock` copies the project, or the source root that
 holds it, to a temporary directory. It runs the Clojure CLI there with an
@@ -212,12 +223,12 @@ test commands. The lockfile records every download:
   A local dependency outside the project needs a source root that holds
   both: `lock --source DIR` names it, and the Nix build takes that
   directory as `src`, with `projectDir` naming the project.
-- **Downloads outside the Clojure CLI** are refused. A build script that
-  downloads a file itself fails in the sandbox, because the lock records
-  only what the Clojure CLI and Maven Resolver fetch.
-- **Git files changed by attributes** are refused. A repository whose
-  checkout differs from its commit, such as one with Git LFS files, cannot
-  rebuild the commit, and the lock run names it.
+- **Downloads outside the Clojure CLI.** A build script that downloads a
+  file itself fails in the sandbox, because the lock records only what the
+  Clojure CLI and Maven Resolver fetch.
+- **Git files changed by attributes.** A repository whose checkout differs
+  from its commit, such as one with Git LFS files, cannot rebuild the
+  commit, and the lock run names it.
 
 Maven Resolver reads its proxy only from `settings.xml`. The lock run uses
 `~/.m2/settings.xml` with its proxies, mirrors and credentials, and
@@ -228,7 +239,6 @@ with the user's ssh agent, and the locked hash still applies:
 
 ```nix
 buildClojureCliProject {
-  inherit pkgs;
   src = ./.;
   fetchers.fetchgit = args: builtins.fetchGit {
     inherit (args) url rev;
@@ -278,9 +288,11 @@ Then build and test it with Nix, from a flake next to `honeysql.lock.json`:
   outputs = { nixpkgs, clojure-cli-purifier, honeysql, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      project = clojure-cli-purifier.lib.clojure-cli-purifier.buildClojureCliProject {
-        inherit pkgs;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ clojure-cli-purifier.overlays.default ];
+      };
+      project = pkgs.buildClojureCliProject {
         src = honeysql;
         lockFile = ./honeysql.lock.json;
       };

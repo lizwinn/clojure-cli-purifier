@@ -57,7 +57,8 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              inherit (self.lib.clojure-cli-purifier) buildClojureCliProject readLock;
+              overlay = self.overlays.default;
+              inherit (self.lib.clojure-cli-purifier) readLock;
               inherit (self.packages.${system}) cli;
             };
             treefmt.programs.nixfmt.enable = true;

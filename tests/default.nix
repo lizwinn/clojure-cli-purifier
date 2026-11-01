@@ -6,16 +6,21 @@
 # its lock runs, so it is a job of CI (.github/workflows/check.yml).
 {
   pkgs,
-  # The builder and the lockfile reader, `buildClojureCliProject` and
-  # `readLock` in the `lib.clojure-cli-purifier` of the flake.
-  buildClojureCliProject,
+  # The default package overlay of the flake, which adds the builder
+  # `buildClojureCliProject`.
+  overlay,
+  # The lockfile reader, `readLock` in the `lib.clojure-cli-purifier` of the
+  # flake.
   readLock,
   # The clojure-cli-purifier command.
   cli,
 }:
 let
   inherit (pkgs) lib;
-  build = args: buildClojureCliProject ({ inherit pkgs; } // args);
+  # Every fixture builds the way a consumer's package does: through the
+  # buildClojureCliProject of a package set that has the overlay.
+  inherit (pkgs.extend overlay) buildClojureCliProject;
+  build = buildClojureCliProject;
 
   # An application with dependencies from Maven Central and Clojars, a
   # local dependency, git dependencies given by tag and short commit

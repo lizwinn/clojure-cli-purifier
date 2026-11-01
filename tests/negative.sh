@@ -26,9 +26,12 @@ evalFails() {
   if output=$(nix eval --raw --impure --expr "
     let
       flake = builtins.getFlake \"git+file://$root\";
+      pkgs = import flake.inputs.nixpkgs {
+        system = builtins.currentSystem;
+        overlays = [ flake.overlays.default ];
+      };
     in
-    (flake.lib.clojure-cli-purifier.buildClojureCliProject {
-      pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
+    (pkgs.buildClojureCliProject {
       src = /. + \"$work/hello\";
       lockFile = /. + \"$lockFile\";
     }).packages.hello.drvPath" 2>&1); then
