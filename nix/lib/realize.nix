@@ -7,13 +7,20 @@
 # project uses them.
 #
 # `nixpkgs` is the nixpkgs source the clojure-cli-purifier command was
-# built with, as a string, so the interactive mode fetches with the same
-# fetchurl and fetchgit as the builder, and the two share every store path.
-{ lockFile, nixpkgs }:
+# built with, and `purifierRef` the locked flake reference of the shared
+# purifier library it was built with, both as strings. So the interactive
+# mode fetches the same way the builder does, and the two share every store
+# path.
+{
+  lockFile,
+  nixpkgs,
+  purifierRef,
+}:
 let
   pkgs = import nixpkgs { };
-  repository = pkgs.callPackage ./repository.nix { inherit lockFile; };
-  gitlibs = pkgs.callPackage ./gitlibs.nix { inherit lockFile; };
+  inherit ((builtins.getFlake purifierRef).lib) purifier;
+  repository = pkgs.callPackage ./repository.nix { inherit lockFile purifier; };
+  gitlibs = pkgs.callPackage ./gitlibs.nix { inherit lockFile purifier; };
 in
 pkgs.runCommand "clojure-cli-purifier-env"
   {

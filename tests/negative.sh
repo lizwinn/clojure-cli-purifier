@@ -21,18 +21,20 @@ cli=$(nix build --no-link --print-out-paths "$root#cli")/bin/clojure-cli-purifie
 jq=$(nix build --no-link --print-out-paths --inputs-from "$root" 'nixpkgs#jq^bin')/bin/jq
 work=$(mktemp -d "${TMPDIR:-/tmp}/clojure-cli-purifier-negative.XXXXXX")
 trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
-nixpkgs=$("$jq" -r '.nodes.nixpkgs.locked | "github:\(.owner)/\(.repo)/\(.rev)"' "$root/flake.lock")
-
 # Builds an attribute of buildClojureCliProject for the hello copy with a
 # lockfile, and prints what Nix reports. It fails when the build succeeds.
+# The builder comes from the overlay of the flake, as a consumer gets it.
 buildFails() {
   local lockFile=$1 attr=$2 output
   if output=$(nix build --no-link --impure --expr "
     let
-      pkgs = import (builtins.getFlake \"$nixpkgs\") { };
-      build = pkgs.callPackage $root/nix/lib/build-clojure-cli-project.nix { };
+      flake = builtins.getFlake \"path:$root\";
+      pkgs = import flake.inputs.nixpkgs {
+        system = builtins.currentSystem;
+        overlays = [ flake.overlays.default ];
+      };
     in
-    (build { src = /. + \"$work/hello\"; lockFile = /. + \"$lockFile\"; }).$attr" 2>&1); then
+    (pkgs.buildClojureCliProject { src = /. + \"$work/hello\"; lockFile = /. + \"$lockFile\"; }).$attr" 2>&1); then
     echo "the build with $lockFile succeeded" >&2
     return 1
   fi

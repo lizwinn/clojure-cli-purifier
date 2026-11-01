@@ -4,7 +4,8 @@
 # under GITLIBS.
 #
 # `libs/<lib>/<commit>` is the checkout of a git dependency, a link to its
-# fetchgit output. `_repos/<scheme>/<host>/<path>` is the bare repository
+# fetch by the shared purifier library. `_repos/<scheme>/<host>/<path>` is
+# the bare repository
 # the CLI expands a short commit and checks a tag in. It is rebuilt here
 # without the network: the files of each locked checkout are added as a
 # tree, every recorded commit object is written back, the repository is
@@ -13,27 +14,28 @@
 # parents, so a rebuilt commit has exactly the locked commit hash, and the
 # builder checks that it does.
 {
+  pkgs,
   lib,
   runCommand,
   jq,
   git,
-  fetchurl,
-  fetchgit,
+  # The functions of the shared purifier library.
+  purifier,
   lockFile,
-  # Replaces nixpkgs' fetchgit; see fetch.nix.
+  # Replaces nixpkgs' fetchgit for the checkouts, such as for a private
+  # repository. It takes the arguments of nixpkgs' fetchgit.
   fetchgitOverride ? null,
 }:
 let
   lock = import ./lock.nix { inherit lockFile; };
-  fetch = import ./fetch.nix {
-    inherit lock fetchgit fetchgitOverride;
-    nixpkgsFetchurl = fetchurl;
-  };
+  fetch = purifier.fetchEntry (
+    { inherit pkgs; } // lib.optionalAttrs (fetchgitOverride != null) { fetchgit = fetchgitOverride; }
+  );
 
   # One line per locked checkout: its path under GITLIBS, its repository
   # URL and its store path.
   checkouts = lib.concatMapStrings (
-    entry: "${entry.path}\t${entry.git.url}\t${fetch.checkout entry}\n"
+    entry: "${entry.path}\t${entry.git.url}\t${fetch entry}\n"
   ) lock.git;
 in
 runCommand "clojure-cli-purifier-gitlibs"

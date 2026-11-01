@@ -6,9 +6,10 @@
 # deploys what Nix built. It calls the nix-build and nix-hash of the Nix
 # installation it runs on.
 {
+  lib,
   writeShellApplication,
   runCommand,
-  callPackage,
+  buildClojureCliProject,
   clojure,
   # The JVM of the Clojure CLI. The lock records its version, and the Nix
   # build runs on a JDK of the same major version.
@@ -39,9 +40,12 @@ let
   # run.
   deployLock = ./deploy + "/clojure-cli-purifier.lock.json";
   hasDeployLock = builtins.pathExists deployLock;
-  deployRepository = callPackage ../../nix/lib/repository.nix {
-    lockFile = deployLock;
-  };
+  deployRepository = (buildClojureCliProject { src = ./deploy; }).repository;
+
+  # The shared purifier library this flake locks, as a flake reference the
+  # interactive mode and the publish step evaluate it from.
+  purifierLock = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.purifier.locked;
+  purifierRef = "github:${purifierLock.owner}/${purifierLock.repo}/${purifierLock.rev}?narHash=${lib.escapeURL purifierLock.narHash}";
   deployClasspath =
     runCommand "clojure-cli-purifier-deploy-classpath"
       {
@@ -83,6 +87,7 @@ writeShellApplication {
     PURIFIER_HELPER = ./helper.clj;
     PURIFIER_TOOLS_JAR = "${clojure'}/libexec/clojure-tools-${clojure'.version}.jar";
     PURIFIER_NIXPKGS = "${path}";
+    PURIFIER_SHARED_REF = purifierRef;
     PURIFIER_DEPLOY_CLASSPATH = if hasDeployLock then "${deployClasspath}/classpath" else "";
   };
   text = ''

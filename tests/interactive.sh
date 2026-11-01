@@ -128,13 +128,15 @@ test "$("$jq" -r '.gitRepos[0].tags.v1' "$lock")" = "$one"
 
 # The Nix build takes the checkouts through the fetchgit replacement, which
 # reads the local repository, and prepares the library in the sandbox.
-nixpkgs=$("$jq" -r '.nodes.nixpkgs.locked | "github:\(.owner)/\(.repo)/\(.rev)"' "$root/flake.lock")
 built=$(nix build --no-link --print-out-paths --impure --expr "
   let
-    pkgs = import (builtins.getFlake \"$nixpkgs\") { };
-    build = pkgs.callPackage $root/nix/lib/build-clojure-cli-project.nix { };
+    flake = builtins.getFlake \"path:$root\";
+    pkgs = import flake.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ flake.overlays.default ];
+    };
   in
-  (build {
+  (pkgs.buildClojureCliProject {
     src = /. + \"$app\";
     doCheck = true;
     fetchgit = args: builtins.fetchGit {

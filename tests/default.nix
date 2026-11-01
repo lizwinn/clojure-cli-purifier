@@ -70,20 +70,19 @@ in
         touch $out
       '';
 
-  # The store names of fetched files and checkouts.
-  nix-lib =
-    assert lock.storeName "hello-1.0.0.jar" == "hello-1.0.0.jar";
-    assert lock.storeName "a b@c$d.jar" == "a_b_c_d.jar";
-    assert lock.storeName "..hidden" == "hidden";
-    assert lock.storeName "..." == "file";
-    assert
-      builtins.stringLength (lock.storeName (pkgs.lib.concatStrings (pkgs.lib.replicate 300 "x"))) == 200;
-    assert
-      lock.checkoutName {
-        path = "libs/io.github.clojure/tools.build/deedd623574e3712687a657691c6b79f5026b3a1";
-        git.rev = "deedd623574e3712687a657691c6b79f5026b3a1";
-      } == "tools.build-deedd623574e";
-    pkgs.runCommand "nix-lib" { } "touch $out";
+  # The lock reader returns the lockfile, whose download entries have the
+  # shapes of the shared purifier library: file entries with mirrors, inline
+  # metadata, and git entries without a .git directory.
+  lock-reader =
+    assert lock.version == 1;
+    assert builtins.all (entry: entry ? url && entry ? mirrors && entry ? hash) lock.artifacts;
+    assert builtins.all (entry: entry ? contents) lock.metadata;
+    assert builtins.length lock.git == 2;
+    assert builtins.all (
+      entry:
+      entry.git.submodules == false && entry.git.leaveDotGit == false && entry.git.commitObject == null
+    ) lock.git;
+    pkgs.runCommand "lock-reader" { } "touch $out";
 
   hello = hello.package;
 

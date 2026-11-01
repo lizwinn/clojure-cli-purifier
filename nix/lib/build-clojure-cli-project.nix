@@ -33,6 +33,9 @@
   # one of the major version its lock was made with.
   javaPackages,
   clojure,
+  # The functions of the shared purifier library, which fetches the locked
+  # downloads. The overlay passes them.
+  purifier,
 }:
 {
   # The source root: the project root, or the directory given to
@@ -47,10 +50,18 @@
     src + (if projectDir == "." then "" else "/${projectDir}") + "/clojure-cli-purifier.lock.json",
   # The JDK that runs the Clojure CLI and the project's JVMs.
   jdk ? null,
-  # Replaces nixpkgs' fetchurl for the Maven files; see fetch.nix.
+  # Replaces nixpkgs' fetchurl for the Maven files, for credentials or a
+  # mirror. It takes the arguments of nixpkgs' fetchurl.
   fetchurl ? null,
   # Replaces nixpkgs' fetchgit for the git dependencies, such as for a
-  # private repository; see fetch.nix.
+  # private repository. It takes the arguments of nixpkgs' fetchgit.
+  # builtins.fetchGit fetches at evaluation time with the ssh agent and git
+  # configuration of the user, and still checks the locked hash:
+  #
+  #   fetchgit = args: builtins.fetchGit {
+  #     inherit (args) url rev;
+  #     narHash = args.hash;
+  #   };
   fetchgit ? null,
   # Runs the test commands of the lock after the build.
   doCheck ? false,
@@ -110,11 +121,11 @@ let
   clojure' = clojure.override { jdk = jdk'; };
 
   repository = callPackage ./repository.nix {
-    inherit lockFile;
+    inherit lockFile purifier;
     fetchurlOverride = fetchurl;
   };
   gitlibs = callPackage ./gitlibs.nix {
-    inherit lockFile;
+    inherit lockFile purifier;
     fetchgitOverride = fetchgit;
   };
 

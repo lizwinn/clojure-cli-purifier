@@ -6,7 +6,8 @@
 # The package sets PURIFIER_LIB (the Nix library, nix/lib), PURIFIER_FORMAT
 # (the lock format version it reads), PURIFIER_HELPER (helper.clj),
 # PURIFIER_TOOLS_JAR (the tools jar of the Clojure CLI, which runs the
-# helper), PURIFIER_NIXPKGS (the nixpkgs source the package was built from)
+# helper), PURIFIER_NIXPKGS (the nixpkgs source the package was built from),
+# PURIFIER_SHARED_REF (the flake reference of the shared purifier library)
 # and JAVA_CMD (the JVM of the Clojure CLI).
 
 lockName=clojure-cli-purifier.lock.json
@@ -565,7 +566,8 @@ realizeEnv() {
   local lockFile=$1 state=$2
   mkdir -p "$state"
   nix-build "$PURIFIER_LIB/realize.nix" --arg lockFile "$lockFile" \
-    --argstr nixpkgs "$PURIFIER_NIXPKGS" -o "$state/env" >/dev/null
+    --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
+    -o "$state/env" >/dev/null
   readlink -f "$state/env"
 }
 
@@ -640,7 +642,7 @@ cmdPublish() {
   local projectDir
   projectDir=$(lockProjectDir "$lockFile")
   package=$(nix-build --no-out-link "$PURIFIER_LIB/package.nix" \
-    --argstr nixpkgs "$PURIFIER_NIXPKGS" \
+    --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
     --argstr src "$(sourceRootOf "$root" "$projectDir")" --argstr projectDir "$projectDir")
   jar="$package/share/java/$name-$version.jar"
   pom="$package/share/java/$name-$version.pom"

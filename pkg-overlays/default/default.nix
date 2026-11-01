@@ -7,6 +7,9 @@
 # for callPackage takes it by name. A consumer that lists this flake in
 # `projects` holds it as `clojure-cli-purifier/default`, which its package
 # sets apply by default.
+#
+# The builder fetches with the shared purifier library, which this flake
+# lists in its `projects`, so its library has `lib.purifier`.
 { closure-lib, ... }:
 let
   packages = closure-lib.caisson.nixpkgs.mkPackagesOverlay ../../pkgs "clojure-cli-purifier";
@@ -16,6 +19,8 @@ in
     final: prev:
     packages final prev
     // {
-      buildClojureCliProject = final.callPackage ../../nix/lib/build-clojure-cli-project.nix { };
+      buildClojureCliProject = final.callPackage ../../nix/lib/build-clojure-cli-project.nix {
+        inherit (closure-lib) purifier;
+      };
     };
 }
