@@ -94,10 +94,14 @@ repository metadata and the git checkouts, and its `outputs` name the
 package. Its `problems` list why the lockfile cannot be used, each with
 the command that fixes it. The builder fails evaluation with them.
 
-A project can keep its build external, with the lockfile outside its
-source, so that a packaging flake builds a project its author does not
-change. The flake passes the lockfile as `lockFile`. Every command takes
-`--lockfile PATH` or the environment variable
+We recommend committing `clojure-cli-purifier.lock.json` to the
+repository of the project. The builder and the commands look for it there
+by default.
+
+A project can instead keep its build external: the flake that calls the
+builder keeps the lockfile outside the source and passes it as `lockFile`,
+so that a packaging flake builds a project its author does not change.
+Every command takes `--lockfile PATH` or the environment variable
 `CLOJURE_CLI_PURIFIER_LOCKFILE`, which a dev shell can set to the same
 path. The flag takes precedence over the variable.
 
@@ -258,8 +262,9 @@ buildClojureCliProject {
 [honeysql](https://github.com/seancorfield/honeysql) turns Clojure data
 into SQL. The build script of the project runs under babashka, so it has no
 Clojure CLI build, and its tests run with `clojure -X:test`. This example
-keeps the lockfile beside your own flake, so the source of honeysql stays
-as its author publishes it.
+uses an external build: the lockfile lies beside your own flake, so the
+source of honeysql stays as its author publishes it. A project you own
+commits its lockfile instead, as the Quickstart does.
 
 Clone the library, and lock it with the test command:
 

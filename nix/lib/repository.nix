@@ -11,21 +11,26 @@
 # the year 2100, so the resolver never asks a remote repository for a newer
 # version list.
 {
-  pkgs,
+  runCommand,
   # The functions of the shared purifier library.
   purifier,
   # The lock in memory, from read-lock.nix and checkLock.
   lock,
-  # The fetchers that replace nixpkgs' own, which `tree` takes.
-  fetchers ? { },
+  # The Nix system whose entries the repository holds.
+  system,
+  # The packages that `tree` and `fetchEntry` take by name: fetchurl,
+  # fetchgit, runCommand, unzip, zstd, python3 and writeText. A fetcher
+  # given here replaces nixpkgs' own.
+  fetchers,
 }:
 purifier.tree (
   fetchers
   // {
-    inherit pkgs;
+    # `tree` builds its derivation with runCommand from this set.
+    pkgs = {
+      inherit runCommand;
+    };
     name = "clojure-cli-purifier-repository";
-    entries = builtins.filter (entry: !(entry ? git)) (
-      purifier.entriesFor pkgs.stdenv.hostPlatform.system lock
-    );
+    entries = builtins.filter (entry: !(entry ? git)) (purifier.entriesFor system lock);
   }
 )

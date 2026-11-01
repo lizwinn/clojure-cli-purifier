@@ -31,6 +31,14 @@
   lib,
   stdenvNoCC,
   runCommand,
+  # The packages that the shared purifier library takes by name to fetch the
+  # downloads and to unpack and lay them out.
+  fetchurl,
+  fetchgit,
+  unzip,
+  zstd,
+  python3,
+  writeText,
   callPackage,
   makeWrapper,
   stripJavaArchivesHook,
@@ -120,12 +128,30 @@ let
   jdk' = if jdk != null then jdk else defaultJdk;
   clojure' = clojure.override { jdk = jdk'; };
 
+  # The packages that fetchEntry and tree take by name, with the fetchers
+  # of the caller in place of nixpkgs' own.
+  libraryPackages = {
+    inherit
+      fetchurl
+      fetchgit
+      runCommand
+      unzip
+      zstd
+      python3
+      writeText
+      ;
+  }
+  // fetchers;
+  system = stdenvNoCC.hostPlatform.system;
+
   repository = callPackage ./repository.nix {
-    inherit purifier fetchers;
+    inherit purifier system;
+    fetchers = libraryPackages;
     lock = checked;
   };
   gitlibs = callPackage ./gitlibs.nix {
-    inherit purifier fetchers;
+    inherit purifier system;
+    fetchers = libraryPackages;
     lock = checked;
   };
 

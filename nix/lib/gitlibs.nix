@@ -14,7 +14,6 @@
 # parents, so a rebuilt commit has exactly the locked commit hash, and the
 # builder checks that it does.
 {
-  pkgs,
   lib,
   runCommand,
   jq,
@@ -23,14 +22,16 @@
   purifier,
   # The lock in memory, from read-lock.nix and checkLock.
   lock,
-  # The fetchers that replace nixpkgs' own, which `fetchEntry` takes.
-  fetchers ? { },
+  # The Nix system whose entries the gitlibs directory holds.
+  system,
+  # The packages that `fetchEntry` takes by name: fetchurl, fetchgit,
+  # runCommand, unzip, zstd, python3 and writeText. A fetcher given here
+  # replaces nixpkgs' own.
+  fetchers,
 }:
 let
-  fetch = purifier.fetchEntry (fetchers // { inherit pkgs; });
-  gitEntries = builtins.filter (entry: entry ? git) (
-    purifier.entriesFor pkgs.stdenv.hostPlatform.system lock
-  );
+  fetch = purifier.fetchEntry fetchers;
+  gitEntries = builtins.filter (entry: entry ? git) (purifier.entriesFor system lock);
 
   # One line per locked checkout: its path under GITLIBS, its repository
   # URL and its store path.

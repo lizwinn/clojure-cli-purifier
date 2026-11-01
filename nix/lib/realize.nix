@@ -29,8 +29,34 @@ let
       inherit projectDir;
     }
   );
-  repository = pkgs.callPackage ./repository.nix { inherit purifier lock; };
-  gitlibs = pkgs.callPackage ./gitlibs.nix { inherit purifier lock; };
+  system = pkgs.stdenv.hostPlatform.system;
+  fetchers = {
+    inherit (pkgs)
+      fetchurl
+      fetchgit
+      runCommand
+      unzip
+      zstd
+      python3
+      writeText
+      ;
+  };
+  repository = pkgs.callPackage ./repository.nix {
+    inherit
+      purifier
+      lock
+      system
+      fetchers
+      ;
+  };
+  gitlibs = pkgs.callPackage ./gitlibs.nix {
+    inherit
+      purifier
+      lock
+      system
+      fetchers
+      ;
+  };
 in
 pkgs.runCommand "clojure-cli-purifier-env"
   {

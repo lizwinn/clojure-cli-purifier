@@ -10,6 +10,12 @@
   writeShellApplication,
   runCommand,
   callPackage,
+  stdenv,
+  fetchurl,
+  fetchgit,
+  zstd,
+  python3,
+  writeText,
   clojure,
   # The JVM of the Clojure CLI. The lock records its version, and the Nix
   # build runs on a JDK of the same major version.
@@ -45,6 +51,18 @@ let
   hasDeployLock = builtins.pathExists deployLock;
   deployRepository = callPackage ../../nix/lib/repository.nix {
     inherit purifier;
+    system = stdenv.hostPlatform.system;
+    fetchers = {
+      inherit
+        fetchurl
+        fetchgit
+        runCommand
+        unzip
+        zstd
+        python3
+        writeText
+        ;
+    };
     lock = purifier.checkLock (import ../../nix/lib/read-lock.nix { src = ./deploy; });
   };
 
