@@ -121,6 +121,34 @@ addMirrors() {
 }
 
 # Prints "<id>\t<url>\t<mirrorOf>" for each mirror of a settings.xml.
+# Writes the repository metadata a lockfile recorded into a local
+# repository, so that a lock run resolves each version range and SNAPSHOT
+# to the version the lockfile holds. The lockfile names each version list
+# after its repository, and a lock run through a mirror reads it under the
+# id of the mirror. Metadata under the directory prefixes after the
+# settings file is left out, so the lock run resolves those libraries
+# anew.
+seedMetadata() {
+  local lockFile=$1 m2=$2 settings=$3 id of path contents prefix skip
+  shift 3
+  local -a renames=(-e 's/^/&/')
+  while IFS=$'\t' read -r id _ of; do
+    if [ -n "$of" ] && [[ $of != *[*,!]* ]]; then
+      renames+=(-e "s/maven-metadata-$of\\.xml/maven-metadata-$id.xml/g")
+    fi
+  done < <(mirrors "$settings")
+  while IFS=$'\t' read -r path contents; do
+    skip=0
+    for prefix in "$@"; do
+      if [[ $path == "$prefix"* ]]; then skip=1; fi
+    done
+    [ $skip = 0 ] || continue
+    path="$(dirname "$path")/$(basename "$path" | sed "${renames[@]}")"
+    mkdir -p "$m2/$(dirname "$path")"
+    printf '%s' "$contents" | base64 -d | sed "${renames[@]}" >"$m2/$path"
+  done < <(jq -r '.metadata[] | [.path, (.contents | @base64)] | @tsv' "$lockFile")
+}
+
 mirrors() {
   [ -f "$1" ] || return 0
   awk '

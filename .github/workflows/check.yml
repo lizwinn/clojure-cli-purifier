@@ -6,7 +6,8 @@
 # check. Then it runs the scripts that need Nix itself or the network: the
 # lock runs, prefetch and publishing, and the messages of Nix. The
 # conformance-relock job relocks every lockfile of the repository and fails
-# when one changes.
+# when one changes. The conformance-update job updates a lockfile that
+# pins an old version.
 name: check
 
 on:
@@ -44,3 +45,15 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
       - run: ./tests/relock-fixtures.sh
       - run: git diff --exit-code
+
+  conformance-update:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: ./tests/update.sh

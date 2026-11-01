@@ -11,6 +11,10 @@
 # and JAVA_CMD (the JVM of the Clojure CLI).
 
 lockName=clojure-cli-purifier.lock.json
+# What `update` re-resolves: every library, or the libraries whose metadata
+# lies under these directories of the local repository.
+updateAll=0
+updatePrefixes=()
 
 usage() {
   cat <<'EOF'
@@ -47,7 +51,13 @@ Usage:
 
       Each option replaces its part of an existing lockfile, and a relock
       keeps every part no option names. Without options or --force, an
-      up-to-date lockfile is left as it is.
+      up-to-date lockfile is left as it is. A relock keeps the versions
+      the lockfile resolved its version ranges and SNAPSHOTs to.
+  clojure-cli-purifier update [--lockfile PATH] [--mirror ID=URL]... [LIB]...
+      Relocks the project and resolves the version ranges and SNAPSHOTs of
+      every library anew, or those of the named libraries, such as
+      org.clojure/core.memoize. Versions that deps.edn names exactly change
+      only when deps.edn does.
   clojure-cli-purifier prefetch [--lockfile PATH]
       Builds the locked downloads into the Nix store, keeps them alive with
       a GC root in .clojure-cli-purifier beside the lockfile, and links
@@ -281,6 +291,13 @@ cmdLock() {
   if [ -z "${CLJ_CONFIG:-}" ] && [ ! -d "$userConfig" ]; then userConfig="$realHome/.clojure"; fi
   writeSettings "$work/home/.m2" "$realHome"
   addMirrors "$work/home/.m2/settings.xml" "${mirrorSpecs[@]}"
+  # A lock keeps the versions the lockfile resolved its version ranges and
+  # SNAPSHOTs to, from the metadata it recorded. `update` leaves out the
+  # metadata of the libraries it updates.
+  if [ $hasLock = 1 ] && [ "$updateAll" = 0 ]; then
+    mkdir -p "$work/home/.m2/repository"
+    seedMetadata "$lockFile" "$work/home/.m2/repository" "$work/home/.m2/settings.xml" "${updatePrefixes[@]}"
+  fi
   echo '{}' >"$work/config/deps.edn"
   export HOME="$work/home"
   export CLJ_CONFIG="$work/config"
@@ -571,6 +588,14 @@ cmdLock() {
     printf '  %s\n' "${unknown[@]}" >&2
     die "the files above came from repositories that neither the project nor settings.xml names"
   fi
+  # The lockfile keeps the metadata of the directories its files lie in:
+  # the version list of a library whose version a range chose, and the
+  # list of a SNAPSHOT. Metadata a relock seeded for a library the project
+  # no longer resolves is left out.
+  jq -c --slurpfile artifacts "$artifacts" \
+    '(.path | split("/") | .[:-1] | join("/") + "/") as $dir
+     | select(any($artifacts[]; .path | startswith($dir)))' "$metadata" >"$metadata.used"
+  mv "$metadata.used" "$metadata"
 
   local -a files
   mapfile -t files < <(definitionFiles "$sourceRoot" "$projectDir")
@@ -618,6 +643,39 @@ cmdLock() {
   rm "$lockFile.content"
   mv "$lockFile.tmp" "$lockFile"
   echo "clojure-cli-purifier: wrote $lockFile ($(jq '.artifacts | length' "$lockFile") files, $(jq '.git | length' "$lockFile") git checkouts, $(jq '.outputs | length' "$lockFile") outputs)"
+}
+
+# `update [LIB...]`: a relock that resolves the version ranges and SNAPSHOTs
+# of every library, or of the named ones, anew. A library is named as in
+# deps.edn, such as org.clojure/core.memoize.
+cmdUpdate() {
+  local -a lockArgs=(--force) libs=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --lockfile | --mirror)
+      [ $# -ge 2 ] || die "update: $1 takes a value"
+      lockArgs+=("$1" "$2")
+      shift
+      ;;
+    -*) die "update: unknown argument $1" ;;
+    *) libs+=("$1") ;;
+    esac
+    shift
+  done
+  if [ ${#libs[@]} = 0 ]; then
+    updateAll=1
+  else
+    local lib group artifact
+    for lib in "${libs[@]}"; do
+      if [[ $lib == */* ]]; then
+        group=${lib%%/*} artifact=${lib#*/}
+      else
+        group=$lib artifact=$lib
+      fi
+      updatePrefixes+=("${group//.//}/$artifact/")
+    done
+  fi
+  cmdLock "${lockArgs[@]}"
 }
 
 # The state directory of a lockfile: .clojure-cli-purifier beside it. It
@@ -792,6 +850,10 @@ case ${1:-} in
 lock)
   shift
   cmdLock "$@"
+  ;;
+update)
+  shift
+  cmdUpdate "$@"
   ;;
 prefetch)
   shift

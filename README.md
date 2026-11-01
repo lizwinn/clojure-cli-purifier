@@ -113,6 +113,19 @@ keeps the build and test commands of the lockfile. `--build`, `--test`,
 `--alias :name` and `--user-aliases` each replace their part of the
 lockfile.
 
+A relock also keeps the versions the lockfile chose for version ranges and
+SNAPSHOTs, from the repository metadata it recorded.
+`clojure-cli-purifier update` resolves them anew, for every library or for
+the named ones:
+
+```zsh
+clojure-cli-purifier update org.clojure/core.memoize
+```
+
+The Clojure CLI has no update command of its own. A version that deps.edn
+names exactly changes when deps.edn does, and a git dependency changes
+when its `:git/sha` does.
+
 The user `deps.edn` stays in effect. `lock --user-aliases` also locks its
 aliases, so that tools kept there, such as an nREPL alias, run offline too.
 
