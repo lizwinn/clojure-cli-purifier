@@ -16,20 +16,23 @@
       inherit (libOverlays) default;
     };
 
-    # The packages are the `default` entry of this flake's package overlay
+    # The scope is the `default` entry of this flake's package overlay
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`.
+    # `overlays.default`. The scope holds the builder, which is a function
+    # and no package, so the flake publishes the command itself as
+    # `packages.cli` below, and not every attribute of the scope.
     nixpkgs = {
-      packages.export.enabled = true;
+      packages.export.enabled = false;
     };
   };
 
   # `nix run github:nix-purifiers/clojure-cli-purifier -- lock` locks the
   # project in the current directory.
   perSystem =
-    { config, ... }:
+    { pkgs, config, ... }:
     {
+      packages.cli = pkgs.clojure-cli-purifier.cli;
       packages.default = config.packages.cli;
     };
 

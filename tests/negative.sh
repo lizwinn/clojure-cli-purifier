@@ -31,7 +31,7 @@ evalFails() {
         overlays = [ flake.overlays.default ];
       };
     in
-    (pkgs.buildClojureCliProject {
+    (pkgs.clojure-cli-purifier.buildClojureCliProject {
       src = /. + \"$work/hello\";
       lockFile = /. + \"$lockFile\";
     }).packages.hello.drvPath" 2>&1); then

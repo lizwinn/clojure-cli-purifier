@@ -156,7 +156,7 @@ built=$(nix build --no-link --print-out-paths --impure --expr "
       overlays = [ flake.overlays.default ];
     };
   in
-  (pkgs.buildClojureCliProject {
+  (pkgs.clojure-cli-purifier.buildClojureCliProject {
     src = /. + \"$app\";
     fetchers.fetchgit = args: builtins.fetchGit {
       inherit (args) url rev;

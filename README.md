@@ -19,14 +19,15 @@ commit `clojure-cli-purifier.lock.json`:
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
 ```
 
-The flake's `overlays.default` adds `buildClojureCliProject` to a package
-set, where nixpkgs keeps its own builders. A package takes the builder by
-name:
+The flake's `overlays.default` adds one attribute to a package set: the
+scope `clojure-cli-purifier`, which holds the builder
+`buildClojureCliProject`, the command and the shared `purifier` library. A
+package takes the scope by name:
 
 ```nix
 # package.nix
-{ buildClojureCliProject }:
-buildClojureCliProject { src = ./.; }
+{ clojure-cli-purifier }:
+clojure-cli-purifier.buildClojureCliProject { src = ./.; }
 ```
 
 The flake applies the overlay and builds the package:
@@ -52,10 +53,11 @@ The flake applies the overlay and builds the package:
 }
 ```
 
-`buildClojureCliProject` is a package for `callPackage`. It takes the
-packages it needs from the package set by name, and
-`buildClojureCliProject.override` replaces any of them. Its own arguments
-are these:
+`buildClojureCliProject` is a package for `callPackage` in that scope. It
+takes the packages it needs by name, and
+`clojure-cli-purifier.buildClojureCliProject.override` replaces any of
+them. `pkgs.clojure-cli-purifier.overrideScope` replaces what everything in
+the scope shares. Its own arguments are these:
 
 - `src` is the project root, or the source root the lock was made with.
 - `projectDir` names the directory of the project in `src`. It is `"."` by
@@ -246,7 +248,7 @@ that needs credentials in the Nix build takes them through
 with the user's ssh agent, and the locked hash still applies:
 
 ```nix
-buildClojureCliProject {
+clojure-cli-purifier.buildClojureCliProject {
   src = ./.;
   fetchers.fetchgit = args: builtins.fetchGit {
     inherit (args) url rev;
@@ -301,7 +303,7 @@ Then build and test it with Nix, from a flake next to `honeysql.lock.json`:
         inherit system;
         overlays = [ clojure-cli-purifier.overlays.default ];
       };
-      project = pkgs.buildClojureCliProject {
+      project = pkgs.clojure-cli-purifier.buildClojureCliProject {
         src = honeysql;
         lockFile = ./honeysql.lock.json;
       };

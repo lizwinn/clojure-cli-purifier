@@ -4,12 +4,13 @@
 # the lockfile `clojure-cli-purifier lock` writes.
 #
 # The file is a package for callPackage: the first argument set is what it
-# takes from the package set by name, and the result is the builder. The
-# default package overlay of the flake adds it as `buildClojureCliProject`,
-# and `buildClojureCliProject.override` replaces what it takes. A package
-# takes the builder like any other builder:
+# takes by name, and the result is the builder. The default package overlay
+# of the flake adds it as `buildClojureCliProject` in the scope
+# `pkgs.clojure-cli-purifier`, and `buildClojureCliProject.override`
+# replaces what it takes. A package takes the scope by name:
 #
-#   { buildClojureCliProject }: (buildClojureCliProject { src = ./.; }).packages.<name>
+#   { clojure-cli-purifier }:
+#   (clojure-cli-purifier.buildClojureCliProject { src = ./.; }).packages.<name>
 #
 # The builder returns
 #

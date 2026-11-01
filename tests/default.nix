@@ -19,7 +19,7 @@ let
   inherit (pkgs) lib;
   # Every fixture builds the way a consumer's package does: through the
   # buildClojureCliProject of a package set that has the overlay.
-  inherit (pkgs.extend overlay) buildClojureCliProject;
+  inherit ((pkgs.extend overlay).clojure-cli-purifier) buildClojureCliProject;
   build = buildClojureCliProject;
 
   # An application with dependencies from Maven Central and Clojars, a
