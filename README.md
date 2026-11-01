@@ -241,17 +241,27 @@ buildClojureCliProject {
 }
 ```
 
-## Real-world projects
+## Examples
 
-| Project | Commit | Lock | Relock after a change | What CI builds |
-| --- | --- | --- | --- | --- |
-| [honeysql](https://github.com/seancorfield/honeysql) | `1cc6bbe` | 67 s, 312 files, 3 git checkouts | 78 s | its 179 tests, from a lockfile kept outside its source |
+CI locks and builds [honeysql](https://github.com/seancorfield/honeysql)
+at commit `1cc6bbe`, as an example of a library with git dependencies and
+a test suite. Its lockfile lies in `tests/real-world/honeysql`, outside
+honeysql's source. The `real-world-honeysql` check builds the library and
+runs its tests in the sandbox, and the `conformance-relock` CI job relocks
+it.
 
-The lock times were measured on one machine through Google's Maven Central
-mirror, and include the test run. honeysql's `build.clj` runs under
-babashka, so its lock names `--test '-X:test'` and no build. Its lockfile
-lies in `tests/real-world/honeysql`. The `real-world-honeysql` check builds
-it, and the `conformance-relock` CI job relocks it.
+On one machine, through Google's Maven Central mirror, locking honeysql
+took 67 seconds and included its test run, and a relock after a dependency
+change took 78 seconds. honeysql's `build.clj` runs under babashka, so its
+lock names `--test '-X:test'` and no build.
+
+The fixtures in `tests/fixtures` are small examples of the other cases:
+Maven Central and Clojars dependencies, a local dependency, git
+dependencies by tag and short sha, a version range, a SNAPSHOT, and a
+repository with several projects.
+
+This section names a few projects that CI uses. It is not a list of the
+projects the purifier has been tried on or works with.
 
 ## Credits
 
