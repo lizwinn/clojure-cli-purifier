@@ -103,6 +103,10 @@ path. The flag takes precedence over the variable.
 
 ## Development loop
 
+The Clojure CLI has no lockfile and no plugin interface for locking. So
+clojure-cli-purifier is a standalone command, and its lockfile
+`clojure-cli-purifier.lock.json` is the only lockfile of the project.
+
 `clojure-cli-purifier prefetch` builds the downloads of the lockfile into
 the Nix store, and links `.clojure-cli-purifier/bin/clojure` beside the
 lockfile. With that directory first on `PATH`, the project's own `clojure`
