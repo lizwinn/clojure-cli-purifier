@@ -20,20 +20,22 @@
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
     # `overlays.default`. The scope holds the builder, which is a function
-    # and no package, so the flake publishes the command itself as
-    # `packages.cli` below, and not every attribute of the scope.
+    # and no package, so the flake publishes the derivations of the scope
+    # as its packages below, and not every attribute of the scope.
     nixpkgs = {
       packages.export.enabled = false;
     };
   };
 
-  # `nix run github:nix-purifiers/clojure-cli-purifier -- lock` locks the
-  # project in the current directory.
+  # The packages are the derivations of the scope, and `default` is the
+  # command: `nix run github:nix-purifiers/clojure-cli-purifier -- lock`
+  # locks the project in the current directory.
   perSystem =
     { pkgs, config, ... }:
     {
-      packages.cli = pkgs.clojure-cli-purifier.cli;
-      packages.default = config.packages.cli;
+      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.clojure-cli-purifier // {
+        default = config.packages.cli;
+      };
     };
 
   partitionedAttrs.checks = "checks";
