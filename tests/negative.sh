@@ -25,7 +25,7 @@ evalFails() {
   local lockFile=$1 output
   if output=$(nix eval --raw --impure --expr "
     let
-      flake = builtins.getFlake \"path:$root\";
+      flake = builtins.getFlake \"git+file://$root\";
     in
     (flake.lib.clojure-cli-purifier.buildClojureCliProject {
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};

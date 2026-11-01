@@ -326,30 +326,52 @@ cmdLock() {
   # every command in a step exits the step itself when it fails.
   local alias log="$work/log"
   : >"$log"
-  (
-    cd "$project" || exit 1
-    clojure -P || exit 1
-    for alias in "${prepare[@]}"; do
-      clojure -P "-M$alias" || exit 1
-    done
-  ) 2>&1 | tee -a "$log" || die "preparing the project failed; see the output above"
+  # Runs the Clojure CLI to resolve and download. A git dependency that
+  # needs preparing stops the CLI with "must be prepared before use" once
+  # it has resolved the project and cloned the dependency. That is no
+  # failure of the first pass, which has to record the checkouts before
+  # they are prepared. It makes the lock run resolve once more after the
+  # preparation.
+  resolveWith() {
+    local output status=0
+    output=$(clojure "$@" 2>&1) || status=$?
+    printf '%s\n' "$output"
+    if [ $status != 0 ]; then
+      if grep -q 'must be prepared before use' <<<"$output"; then
+        touch "$work/needs-prep"
+      else
+        return 1
+      fi
+    fi
+  }
   # A POM can choose dependencies by architecture, through a profile that
   # Maven Resolver activates from os.arch. The project resolves again for
   # each architecture the flake builds for, so the lock holds what every
   # one of them resolves.
-  local thisArch otherArch
+  local thisArch
   thisArch=$("$JAVA_CMD" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *os.arch = //p')
-  for otherArch in amd64 aarch64; do
-    [ "$otherArch" != "$thisArch" ] || continue
-    local archOpts="$CLJ_JVM_OPTS -Dos.arch=$otherArch"
+  resolveProject() {
+    local otherArch archOpts
     (
       cd "$project" || exit 1
-      CLJ_JVM_OPTS=$archOpts clojure -Sforce -P || exit 1
+      resolveWith -P || exit 1
       for alias in "${prepare[@]}"; do
-        CLJ_JVM_OPTS=$archOpts clojure -Sforce -P "-M$alias" || exit 1
+        resolveWith -P "-M$alias" || exit 1
       done
-    ) 2>&1 | tee -a "$log" || die "preparing the project for $otherArch failed; see the output above"
-  done
+    ) 2>&1 | tee -a "$log" || die "preparing the project failed; see the output above"
+    for otherArch in amd64 aarch64; do
+      [ "$otherArch" != "$thisArch" ] || continue
+      archOpts="$CLJ_JVM_OPTS -Dos.arch=$otherArch"
+      (
+        cd "$project" || exit 1
+        CLJ_JVM_OPTS=$archOpts resolveWith -Sforce -P || exit 1
+        for alias in "${prepare[@]}"; do
+          CLJ_JVM_OPTS=$archOpts resolveWith -Sforce -P "-M$alias" || exit 1
+        done
+      ) 2>&1 | tee -a "$log" || die "preparing the project for $otherArch failed; see the output above"
+    done
+  }
+  resolveProject
   if [ ${#userPrepare[@]} -gt 0 ]; then
     # The aliases of the user deps.edn resolve with it, in a cache of their
     # own.
@@ -442,6 +464,13 @@ cmdLock() {
   (
     cd "$project" || exit 1
     clojure -X:deps prep :aliases "[${prepare[*]}]" || exit 1
+  ) 2>&1 | tee -a "$log" || die "preparing the git dependencies failed; see the output above"
+  # The passes that the missing preparation cut short run again.
+  if [ -f "$work/needs-prep" ]; then
+    resolveProject
+  fi
+  (
+    cd "$project" || exit 1
     while IFS= read -r command; do
       mapfile -t words < <(jq -r '.[]' <<<"$command")
       echo "clojure-cli-purifier: clojure ${words[*]}"

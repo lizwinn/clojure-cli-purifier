@@ -97,7 +97,11 @@ writeShellApplication {
     PURIFIER_DEPLOY_CLASSPATH = if hasDeployLock then "${deployClasspath}/classpath" else "";
   };
   text = ''
-    export JAVA_CMD=''${JAVA_CMD:-${jdk}/bin/java}
+    # The lock records the Java version, and the Nix build runs on the JDK
+    # of that major version, so every command runs on this package's JDK
+    # and not on the JDK that JAVA_CMD or JAVA_HOME names.
+    export JAVA_CMD=${jdk}/bin/java
+    unset JAVA_HOME
   ''
   + builtins.readFile ./lib.sh
   + builtins.readFile ./clojure-cli-purifier.sh;

@@ -8,7 +8,8 @@
 # before 1.1.266 was out.
 #
 #   - `clojure-cli-purifier lock --force` keeps 1.0.257, the version the
-#     lockfile resolved the range to;
+#     lockfile resolved the range to, beside the 1.1.266 that tools.build
+#     needs;
 #   - `clojure-cli-purifier update org.clojure/core.memoize` resolves the
 #     range anew, to 1.1.266, and the lockfile then passes the stale check.
 #
@@ -49,9 +50,12 @@ hash=$("$jq" -S -c 'del(.contentHash)' "$lock.old" | tr -d '\n' | sha256sum | cu
 "$jq" --arg hash "$hash" '.contentHash = $hash' "$lock.old" >"$lock"
 rm "$lock.old"
 
+# tools.build depends on core.memoize 1.1.266, so every lock holds that
+# version. The range of the :range alias adds a second version when the
+# version list ends below it.
 echo "== lock keeps the version the lockfile resolved the range to"
 "$cli" lock --force --mirror "$mirror"
-test "$(memoizeVersion)" = 1.0.257
+test "$(memoizeVersion)" = "1.0.257 1.1.266"
 
 echo "== update resolves the range anew"
 "$cli" update org.clojure/core.memoize --mirror "$mirror"

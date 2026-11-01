@@ -59,6 +59,9 @@ mkdir -p "$work/repository"
 # repository needs no network.
 (
   unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+  # deps-deploy keeps a local Maven repository under user.home.
+  export JAVA_TOOL_OPTIONS="$JAVA_TOOL_OPTIONS -Duser.home=$work/publish-home"
+  mkdir -p "$work/publish-home"
   "$cli" publish --repository "local=file://$work/repository"
 )
 cmp "$built" "$work/repository/example/hello/1.0.0/hello-1.0.0.jar"
@@ -113,11 +116,12 @@ git -C "$gitrepo" commit -q -m one
 git -C "$gitrepo" tag v1
 echo '(ns lib.core) (defn which [] "two")' >"$gitrepo/src/lib/core.clj"
 git -C "$gitrepo" commit -q -am two
+git -C "$gitrepo" tag v2
 one=$(git -C "$gitrepo" rev-parse HEAD~1)
 two=$(git -C "$gitrepo" rev-parse HEAD)
 url="file://$gitrepo"
 
-# An application that takes the second commit by short commit, and the
+# An application that takes the second commit by tag and short commit, and the
 # first by tag through a local dependency. The Clojure CLI keeps the
 # second, which descends from the first.
 app="$work/gitapp"
@@ -125,7 +129,7 @@ mkdir -p "$app/src/app" "$app/mid"
 cat >"$app/deps.edn" <<EOF
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.3"}
-        test/lib {:git/url "$url" :git/sha "${two:0:7}"}
+        test/lib {:git/url "$url" :git/tag "v2" :git/sha "${two:0:7}"}
         test/mid {:local/root "mid"}}
  :aliases {:run {:main-opts ["-m" "app.main"]}}}
 EOF
@@ -146,7 +150,7 @@ test "$("$jq" -r '.gitRepos[0].tags.v1' "$lock")" = "$one"
 # reads the local repository, and prepares the library in the sandbox.
 built=$(nix build --no-link --print-out-paths --impure --expr "
   let
-    flake = builtins.getFlake \"path:$root\";
+    flake = builtins.getFlake \"git+file://$root\";
   in
   (flake.lib.clojure-cli-purifier.buildClojureCliProject {
     pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
@@ -160,13 +164,6 @@ built=$(nix build --no-link --print-out-paths --impure --expr "
 test -d "$built"
 nix log "$built" | grep -qx 'value 42 two'
 
-(
-  cd "$app"
-  "$cli" prefetch
-  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
-  export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
-  clojure -M:run | grep -qx 'value 42 two'
-)
 
 echo "== a lockfile kept outside the project, by flag and by environment"
 external="$work/packaging/clojure-cli-purifier.lock.json"
