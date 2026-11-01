@@ -46,7 +46,11 @@ let
     trimmed >= 2
     && builtins.substring 0 1 text == "{"
     && builtins.substring (trimmed - 1) 1 text == "}";
-  parsed = builtins.fromJSON text;
+  # A lockfile that passes the test above and is still not valid JSON stops
+  # evaluation here, and the error context names the lockfile and the fix.
+  parsed = builtins.addErrorContext "while reading ${name}, which is not valid JSON. Run `clojure-cli-purifier lock --force` in the project to write it again." (
+    builtins.fromJSON text
+  );
 
   supportedVersion = import ./lock-version.nix;
 
