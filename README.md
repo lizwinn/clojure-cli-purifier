@@ -19,18 +19,30 @@ commit `clojure-cli-purifier.lock.json`:
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
 ```
 
-The flake's `overlays.default` adds one attribute to a package set: the
-scope `clojure-cli-purifier`, which holds the builder
-`buildClojureCliProject`, the command and the shared `purifier` library. A
-package takes the scope by name:
+Then build the project from its directory. The command adds no Nix file to
+the project:
 
-```nix
-# package.nix
-{ clojure-cli-purifier }:
-clojure-cli-purifier.buildClojureCliProject { src = ./.; }
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; }).packages.hello'
 ```
 
-The flake applies the overlay and builds the package:
+`packages.hello` is the package of the project, which the example names
+`hello`. The result links to `./result`.
+
+The flake's `overlays.default` adds one attribute to a package set: the
+scope `clojure-cli-purifier`, which holds the builder
+`buildClojureCliProject`, the command and the shared `purifier` library.
+
+A project whose authors want a flake packages itself with the same call.
+The flake can lie in the repository of the project or in another one:
 
 ```nix
 {
@@ -44,7 +56,7 @@ The flake applies the overlay and builds the package:
         inherit system;
         overlays = [ clojure-cli-purifier.overlays.default ];
       };
-      project = pkgs.callPackage ./package.nix { };
+      project = pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; };
     in
     {
       packages.${system}.default = project.packages.hello;
@@ -55,7 +67,7 @@ The flake applies the overlay and builds the package:
 
 `buildClojureCliProject` is a package for `callPackage` in that scope. It
 takes the packages it needs by name, and
-`clojure-cli-purifier.buildClojureCliProject.override` replaces any of
+`pkgs.clojure-cli-purifier.buildClojureCliProject.override` replaces any of
 them. `pkgs.clojure-cli-purifier.overrideScope` replaces what everything in
 the scope shares. Its own arguments are these:
 
@@ -264,9 +276,9 @@ clojure-cli-purifier.buildClojureCliProject {
 [honeysql](https://github.com/seancorfield/honeysql) turns Clojure data
 into SQL. The build script of the project runs under babashka, so it has no
 Clojure CLI build, and its tests run with `clojure -X:test`. This example
-uses an external build: the lockfile lies beside your own flake, so the
-source of honeysql stays as its author publishes it. A project you own
-commits its lockfile instead, as the Quickstart does.
+uses an external build: the lockfile lies outside the clone, so the source
+of honeysql stays as its author publishes it. A project you own commits its
+lockfile instead, as the Quickstart does.
 
 Clone the library, and lock it with the test command:
 
@@ -285,39 +297,25 @@ export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
 clojure -X:test
 ```
 
-Then build and test it with Nix, from a flake next to `honeysql.lock.json`:
+Then build and test it with Nix, from the directory of the clone:
 
-```nix
-{
-  inputs.clojure-cli-purifier.url = "github:nix-purifiers/clojure-cli-purifier";
-  inputs.nixpkgs.follows = "clojure-cli-purifier/nixpkgs";
-  inputs.honeysql = {
-    url = "github:seancorfield/honeysql";
-    flake = false;
-  };
-
-  outputs = { nixpkgs, clojure-cli-purifier, honeysql, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ clojure-cli-purifier.overlays.default ];
-      };
-      project = pkgs.clojure-cli-purifier.buildClojureCliProject {
-        src = honeysql;
-        lockFile = ./honeysql.lock.json;
-      };
-    in
-    {
-      checks.${system}.honeysql = project.tests;
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
     };
-}
+  in
+  (pkgs.clojure-cli-purifier.buildClojureCliProject {
+    src = ./.;
+    lockFile = ../honeysql.lock.json;
+  }).tests'
 ```
 
-`nix flake check` builds honeysql and runs its tests in the sandbox. After
-a change to the `deps.edn` of honeysql, run `lock` again with the same
-`--lockfile`. The command `nix flake update honeysql` moves the flake to a
-newer honeysql.
+The build runs the tests of honeysql in the sandbox. After a change to the
+`deps.edn` of honeysql, run `lock` again with the same `--lockfile`.
 
 ### A library with a build script
 
@@ -328,8 +326,8 @@ A project whose `build.clj` has the usual `jar` function, run through
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build jar' --test '-M:test'
 ```
 
-Its flake is the one in the Quickstart. `project.packages.<name>` holds the
-jar and the POM, and `project.release` is what
+Build it from its directory with the expression of the Quickstart.
+`packages.<name>` holds the jar and the POM, and `release` is what
 `clojure-cli-purifier publish` uploads to Clojars.
 
 ## Credits
