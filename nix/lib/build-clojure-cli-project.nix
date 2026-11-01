@@ -1,40 +1,45 @@
 # SPDX-License-Identifier: MIT
 #
 # buildClojureCliProject: the sandboxed build of a deps.edn project, from
-# the lockfile `clojure-cli-purifier lock` writes at the project root.
+# the lockfile `clojure-cli-purifier lock` writes.
 #
 # The file is a package for callPackage: the first argument set is what it
-# takes from the package set, and the result is the builder. The
-# clojure-cli-purifier overlay (`overlays.default`) adds it to the package
-# set as `buildClojureCliProject`, so a package written for callPackage
-# takes it like any other dependency:
+# takes from the package set, and the result is the builder. The library
+# of the flake holds it as `lib.clojure-cli-purifier.buildClojureCliProject`,
+# which takes the package set as `pkgs`:
 #
-#   { buildClojureCliProject }: (buildClojureCliProject { src = ./.; }).package
+#   lib.clojure-cli-purifier.buildClojureCliProject { inherit pkgs; src = ./.; }
 #
-# and `buildClojureCliProject.override` replaces what it takes from the
-# set. The builder returns
+# The builder returns
 #
+#   packages.<name>  the project's outputs in share/java, its POM there when
+#                    the build writes one, and a launcher in bin for each
+#                    output jar with a main class, under the project's name
+#   tests            the same build, which also runs the test commands of
+#                    the lock
+#   release          the jar and the POM that `clojure-cli-purifier
+#                    publish` deploys
+#   fetches          the entries of the lock: the Maven files, the recorded
+#                    repository metadata and the git checkouts
 #   repository       the local Maven repository of the lock
 #   gitlibs          the gitlibs directory of the lock
-#   package          the project's outputs in share/java, its POM there
-#                    when the build writes one, and a launcher in bin for
-#                    each output jar with a main class
-#   packages.<name>  the same package, under the project's name
-#   lock             the lockfile, as lock.nix reads it
+#   lock             the lock in memory, from readLock
 #   jdk              the JDK the build runs on
 #   clojure          the Clojure CLI the build runs
 {
   lib,
   stdenvNoCC,
+  runCommand,
   callPackage,
   makeWrapper,
+  stripJavaArchivesHook,
   git,
   # The JDKs a build can run on. The default JDK of a build is the headless
   # one of the major version its lock was made with.
   javaPackages,
   clojure,
   # The functions of the shared purifier library, which fetches the locked
-  # downloads. The overlay passes them.
+  # downloads.
   purifier,
 }:
 {
@@ -45,49 +50,37 @@
   # The directory of the project, which holds deps.edn, relative to `src`.
   projectDir ? ".",
   # The lockfile. The default is the one `clojure-cli-purifier lock` writes
-  # at the project root.
+  # at the project root. A lockfile outside `src` takes the place of any
+  # lockfile in `src`, so a packaging flake builds a project that holds no
+  # lockfile.
   lockFile ?
     src + (if projectDir == "." then "" else "/${projectDir}") + "/clojure-cli-purifier.lock.json",
-  # The JDK that runs the Clojure CLI and the project's JVMs.
-  jdk ? null,
-  # Replaces nixpkgs' fetchurl for the Maven files, for credentials or a
-  # mirror. It takes the arguments of nixpkgs' fetchurl.
-  fetchurl ? null,
-  # Replaces nixpkgs' fetchgit for the git dependencies, such as for a
-  # private repository. It takes the arguments of nixpkgs' fetchgit.
-  # builtins.fetchGit fetches at evaluation time with the ssh agent and git
-  # configuration of the user, and still checks the locked hash:
+  # The fetchers that replace nixpkgs' own, which the shared purifier
+  # library's fetchEntry and tree take, such as a `fetchurl` that sends
+  # credentials or reads a company mirror, or a `fetchgit` for a private
+  # repository. Each takes the arguments of the nixpkgs fetcher of the same
+  # name. builtins.fetchGit fetches at evaluation time with the ssh agent
+  # and git configuration of the user, and still checks the locked hash:
   #
-  #   fetchgit = args: builtins.fetchGit {
+  #   fetchers.fetchgit = args: builtins.fetchGit {
   #     inherit (args) url rev;
   #     narHash = args.hash;
   #   };
-  fetchgit ? null,
-  # Runs the test commands of the lock after the build.
-  doCheck ? false,
+  fetchers ? { },
+  # The JDK that runs the Clojure CLI and the project's JVMs.
+  jdk ? null,
   # Filters the project root before it is copied into the store, as the
   # `filter` of builtins.path. The default leaves out build outputs and
   # editor state.
   srcFilter ? null,
 }:
 let
-  lock = import ./lock.nix { inherit lockFile; };
-  lockProjectDir = lock.projectDir or ".";
-
-  # The lock records the hash of the files that decide what the project
-  # resolves: deps.edn, the deps.edn of each local dependency, and the
-  # build script. A project whose definition changed after locking would
-  # resolve downloads the lock does not hold, so the build stops before it
-  # starts.
-  definitionHash = builtins.hashString "sha256" (
-    lib.concatMapStrings (
-      file:
-      let
-        path = src + "/${file}";
-      in
-      if builtins.pathExists path then builtins.readFile path else ""
-    ) lock.definitionFiles
-  );
+  # The lock in memory. checkLock stops evaluation with the problems of an
+  # unusable lockfile, among them a project whose definition changed after
+  # locking, which would resolve downloads the lock does not hold.
+  checked = purifier.checkLock (import ./read-lock.nix { inherit src projectDir lockFile; });
+  # The lockfile itself, which holds the commands and outputs of the build.
+  lock = checked.lockfile;
 
   defaultSrcFilter =
     path: type:
@@ -97,7 +90,13 @@ let
     !(
       (
         type == "directory"
-        && (name == "target" || name == ".cpcache" || name == ".lsp" || name == ".clj-kondo")
+        && (
+          name == "target"
+          || name == ".cpcache"
+          || name == ".lsp"
+          || name == ".clj-kondo"
+          || name == ".clojure-cli-purifier"
+        )
       )
       || name == ".git"
       || name == ".idea"
@@ -121,12 +120,12 @@ let
   clojure' = clojure.override { jdk = jdk'; };
 
   repository = callPackage ./repository.nix {
-    inherit lockFile purifier;
-    fetchurlOverride = fetchurl;
+    inherit purifier fetchers;
+    lock = checked;
   };
   gitlibs = callPackage ./gitlibs.nix {
-    inherit lockFile purifier;
-    fetchgitOverride = fetchgit;
+    inherit purifier fetchers;
+    lock = checked;
   };
 
   project = lock.project;
@@ -136,7 +135,6 @@ let
   );
 
   javaDirectory = "share/java";
-  outputFile = package: output: "${package}/${javaDirectory}/${baseNameOf output.path}";
 
   launchers = builtins.filter (output: output.mainClass != null) lock.outputs;
   # One launcher takes the project's name, and several take the names of
@@ -148,133 +146,140 @@ let
     else
       lib.removeSuffix ".jar" (baseNameOf output.path);
 
-  package = stdenvNoCC.mkDerivation (finalAttrs: {
-    pname = project.name;
-    version = if project.version != null then project.version else "0";
-    src = filteredSrc;
-    # The build runs in the project directory of the source root.
-    sourceRoot = srcName + lib.optionalString (projectDir != ".") "/${projectDir}";
-    nativeBuildInputs = [
-      jdk'
-      clojure'
-      git
-    ]
-    ++ lib.optional (launchers != [ ]) makeWrapper;
-    dontConfigure = true;
-    inherit doCheck;
+  build =
+    { check }:
+    stdenvNoCC.mkDerivation {
+      pname = project.name + lib.optionalString check "-tests";
+      version = if project.version != null then project.version else "0";
+      src = filteredSrc;
+      # The build runs in the project directory of the source root.
+      sourceRoot = srcName + lib.optionalString (projectDir != ".") "/${projectDir}";
+      # tools.build writes each jar entry with the time of the build, and
+      # stripJavaArchivesHook sets every entry to a fixed time in the fixup
+      # phase, so a rebuild writes the same jars.
+      nativeBuildInputs = [
+        jdk'
+        clojure'
+        git
+        stripJavaArchivesHook
+      ]
+      ++ lib.optional (launchers != [ ]) makeWrapper;
+      dontConfigure = true;
+      doCheck = check;
 
-    # `clojure-cli-purifier lock` runs the Clojure CLI the same way, so a
-    # lock made with it holds what this needs: the local repository and the
-    # gitlibs directory hold every download, and no user configuration
-    # applies. The JVMs find the repository through user.home, which HOME
-    # does not set.
-    preBuild = ''
-      export HOME="$TMPDIR/home"
-      mkdir -p "$HOME/.m2/repository" "$TMPDIR/config" "$TMPDIR/java-tmp"
-      cp -rs --no-preserve=mode ${repository}/. "$HOME/.m2/repository"
-      # Maven Resolver rewrites the metadata records it reads, so those are
-      # writable copies.
-      find "$HOME/.m2/repository" -type l \( -name 'maven-metadata*.xml' -o -name resolver-status.properties \) \
-        -exec cp --remove-destination --no-preserve=mode -L {} {}.tmp \; -exec mv {}.tmp {} \;
-      export GITLIBS="$TMPDIR/gitlibs"
-      mkdir -p "$GITLIBS"
-      # A git dependency that needs preparing is prepared in its checkout,
-      # so the checkouts are writable copies.
-      cp -rL --no-preserve=mode ${gitlibs}/. "$GITLIBS"
-      echo '{}' >"$TMPDIR/config/deps.edn"
-      export CLJ_CONFIG="$TMPDIR/config"
-      export CLJ_CACHE="$TMPDIR/cpcache"
-      export CLJ_JVM_OPTS="-Duser.home=$HOME -Djava.io.tmpdir=$TMPDIR/java-tmp"
-      export JAVA_OPTS="$CLJ_JVM_OPTS"
-      export JAVA_CMD=${jdk'}/bin/java
-      export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-      # Runs the Clojure CLI. When it fails to resolve a download, the
-      # lockfile lacks that download, and the message says how to renew it.
-      purifierClojure() {
-        if clojure "$@" > >(tee "$TMPDIR/clojure.log") 2>&1; then
-          return 0
-        fi
-        if grep -qE 'could not be resolved|Could not transfer|Could not find artifact|Unable to clone|Network is unreachable' "$TMPDIR/clojure.log"; then
-          echo "clojure-cli-purifier: the Clojure CLI tried to download something ${toString lockFile} does not hold. Run clojure-cli-purifier lock --force in the project, which records every download again." >&2
-        fi
-        return 1
+      # `clojure-cli-purifier lock` runs the Clojure CLI the same way, so a
+      # lock made with it holds what this needs: the local repository and
+      # the gitlibs directory hold every download, and no user configuration
+      # applies. The JVMs find the repository through user.home, which HOME
+      # does not set.
+      preBuild = ''
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME/.m2/repository" "$TMPDIR/config" "$TMPDIR/java-tmp"
+        cp -rs --no-preserve=mode ${repository}/. "$HOME/.m2/repository"
+        # Maven Resolver rewrites the metadata records it reads, so those
+        # are writable copies.
+        find "$HOME/.m2/repository" -type l \( -name 'maven-metadata*.xml' -o -name resolver-status.properties \) \
+          -exec cp --remove-destination --no-preserve=mode -L {} {}.tmp \; -exec mv {}.tmp {} \;
+        export GITLIBS="$TMPDIR/gitlibs"
+        mkdir -p "$GITLIBS"
+        # A git dependency that needs preparing is prepared in its checkout,
+        # so the checkouts are writable copies.
+        cp -rL --no-preserve=mode ${gitlibs}/. "$GITLIBS"
+        echo '{}' >"$TMPDIR/config/deps.edn"
+        export CLJ_CONFIG="$TMPDIR/config"
+        export CLJ_CACHE="$TMPDIR/cpcache"
+        export CLJ_JVM_OPTS="-Duser.home=$HOME -Djava.io.tmpdir=$TMPDIR/java-tmp"
+        export JAVA_OPTS="$CLJ_JVM_OPTS"
+        export JAVA_CMD=${jdk'}/bin/java
+        # The Clojure compiler orders the fields of a closure by the
+        # identity hash codes of its locals, which differ between JVM runs,
+        # so ahead-of-time compiled classes would differ between builds.
+        # hashCode=2 gives every object the same identity hash code. The
+        # JVMs that tools.build starts read JAVA_TOOL_OPTIONS too.
+        export JAVA_TOOL_OPTIONS="-XX:+UnlockExperimentalVMOptions -XX:hashCode=2"
+        export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+        # Runs the Clojure CLI. When it fails to resolve a download, the
+        # lockfile lacks that download, and the message says how to renew
+        # it.
+        purifierClojure() {
+          if clojure "$@" > >(tee "$TMPDIR/clojure.log") 2>&1; then
+            return 0
+          fi
+          if grep -qE 'could not be resolved|Could not transfer|Could not find artifact|Failed to read artifact descriptor|Unable to clone|Network is unreachable' "$TMPDIR/clojure.log"; then
+            echo "clojure-cli-purifier: the Clojure CLI tried to download something ${toString lockFile} does not hold. Run clojure-cli-purifier lock in the project, which records every download again." >&2
+          fi
+          return 1
+        }
+        # Git dependencies that need preparing are prepared for the aliases
+        # the lock prepared, as the lock run did.
+        purifierClojure -X:deps prep :aliases ${lib.escapeShellArg "[${lib.concatStringsSep " " lock.prepared}]"}
+      '';
+      buildPhase = ''
+        runHook preBuild
+        ${clojureCommands lock.build}
+        runHook postBuild
+      '';
+      checkPhase = ''
+        runHook preCheck
+        ${clojureCommands lock.test}
+        runHook postCheck
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/${javaDirectory}"
+        for output in ${lib.escapeShellArgs (map (output: output.path) lock.outputs)}; do
+          if [ ! -f "$output" ]; then
+            echo "clojure-cli-purifier: the lock names $output, which this build of ${project.name} did not produce; run clojure-cli-purifier lock --force" >&2
+            exit 1
+          fi
+          cp "$output" "$out/${javaDirectory}/"
+        done
+        ${lib.optionalString (lock.pom != null) ''
+          cp ${lib.escapeShellArg lock.pom} "$out/${javaDirectory}/${project.name}-${project.version}.pom"
+        ''}
+        ${lib.concatMapStrings (output: ''
+          makeWrapper ${jdk'}/bin/java "$out/bin/${launcherName output}" \
+            --add-flags "-jar $out/${javaDirectory}/${baseNameOf output.path}"
+        '') launchers}
+        runHook postInstall
+      '';
+      meta = {
+        description = "${project.group}/${project.name}, built by clojure-cli-purifier";
       }
-      # Git dependencies that need preparing are prepared for the aliases
-      # the lock prepared, as the lock run did.
-      purifierClojure -X:deps prep :aliases ${lib.escapeShellArg "[${lib.concatStringsSep " " lock.prepared}]"}
-    '';
-    buildPhase = ''
-      runHook preBuild
-      ${clojureCommands lock.build}
-      runHook postBuild
-    '';
-    checkPhase = ''
-      runHook preCheck
-      ${clojureCommands lock.test}
-      runHook postCheck
-    '';
-    dontFixup = launchers == [ ];
-    installPhase = ''
-      runHook preInstall
-      mkdir -p "$out/${javaDirectory}"
-      for output in ${lib.escapeShellArgs (map (output: output.path) lock.outputs)}; do
-        if [ ! -f "$output" ]; then
-          echo "clojure-cli-purifier: the lock names $output, which this build of ${project.name} did not produce; run clojure-cli-purifier lock --force" >&2
-          exit 1
-        fi
-        cp "$output" "$out/${javaDirectory}/"
-      done
-      ${lib.optionalString (lock.pom != null) ''
-        cp ${lib.escapeShellArg lock.pom} "$out/${javaDirectory}/${project.name}-${project.version}.pom"
-      ''}
-      ${lib.concatMapStrings (output: ''
-        makeWrapper ${jdk'}/bin/java "$out/bin/${launcherName output}" \
-          --add-flags "-jar $out/${javaDirectory}/${baseNameOf output.path}"
-      '') launchers}
-      runHook postInstall
-    '';
-    passthru = {
-      inherit repository gitlibs lock;
-      jdk = jdk';
-      clojure = clojure';
-      # The files of the package by file name, such as
-      # artifacts."hello-1.0.0-standalone.jar". They are known from the
-      # lock alone, before the package is built.
-      artifacts =
-        builtins.listToAttrs (
-          map (output: {
-            name = baseNameOf output.path;
-            value = outputFile finalAttrs.finalPackage output;
-          }) lock.outputs
-        )
-        // lib.optionalAttrs (lock.pom != null) {
-          "${project.name}-${project.version}.pom" =
-            "${finalAttrs.finalPackage}/${javaDirectory}/${project.name}-${project.version}.pom";
-        };
+      // lib.optionalAttrs (launchers != [ ]) { mainProgram = launcherName (builtins.head launchers); };
     };
-    meta = {
-      description = "${project.group}/${project.name}, built by clojure-cli-purifier";
-    }
-    // lib.optionalAttrs (launchers != [ ]) { mainProgram = launcherName (builtins.head launchers); };
-  });
+
+  package = build { check = false; };
+
+  # The jar that publishing deploys is named after the project and its
+  # version, as tools.build names the jar of a library.
+  releaseJar = "${project.name}-${toString project.version}.jar";
+  releaseProblem =
+    if lock.pom == null then
+      "the build of ${toString lockFile} writes no POM, which a release needs"
+    else if !(builtins.any (output: baseNameOf output.path == releaseJar) lock.outputs) then
+      "the build of ${toString lockFile} makes no ${releaseJar}, which a release needs"
+    else
+      null;
+  release =
+    if releaseProblem != null then
+      throw "clojure-cli-purifier: ${releaseProblem}; give `clojure-cli-purifier lock` a --build that writes them."
+    else
+      runCommand "${project.name}-${project.version}-release" { } ''
+        mkdir -p $out
+        cp ${package}/${javaDirectory}/${releaseJar} $out/
+        cp ${package}/${javaDirectory}/${project.name}-${project.version}.pom $out/
+      '';
 in
 assert
-  lockProjectDir == projectDir
-  || throw "clojure-cli-purifier: ${toString lockFile} was made for the project directory ${lockProjectDir} of its source root, and buildClojureCliProject has projectDir ${projectDir}; pass projectDir = \"${lockProjectDir}\".";
-assert
-  definitionHash == lock.definitionHash
-  || throw "clojure-cli-purifier: the project definition in ${toString src} (${lib.concatStringsSep ", " lock.definitionFiles}) changed after ${toString lockFile} was made; run `clojure-cli-purifier lock`.";
-assert
   clojure'.version == lock.clojureVersion
-  || throw "clojure-cli-purifier: the lock was made with Clojure CLI ${lock.clojureVersion}, and this package set has Clojure CLI ${clojure'.version}. Re-lock with the clojure-cli-purifier of this package set, or pass a `clojure` of version ${lock.clojureVersion} through buildClojureCliProject.override.";
+  || throw "clojure-cli-purifier: the lock was made with Clojure CLI ${lock.clojureVersion}, and this package set has Clojure CLI ${clojure'.version}. Run `clojure-cli-purifier lock` with the clojure-cli-purifier of this package set.";
 {
-  inherit
-    lock
-    repository
-    gitlibs
-    package
-    ;
   packages.${project.name} = package;
+  tests = build { check = true; };
+  inherit release repository gitlibs;
+  lock = checked;
+  fetches = checked.entries;
   jdk = jdk';
   clojure = clojure';
 }

@@ -21,22 +21,22 @@
   git,
   # The functions of the shared purifier library.
   purifier,
-  lockFile,
-  # Replaces nixpkgs' fetchgit for the checkouts, such as for a private
-  # repository. It takes the arguments of nixpkgs' fetchgit.
-  fetchgitOverride ? null,
+  # The lock in memory, from read-lock.nix and checkLock.
+  lock,
+  # The fetchers that replace nixpkgs' own, which `fetchEntry` takes.
+  fetchers ? { },
 }:
 let
-  lock = import ./lock.nix { inherit lockFile; };
-  fetch = purifier.fetchEntry (
-    { inherit pkgs; } // lib.optionalAttrs (fetchgitOverride != null) { fetchgit = fetchgitOverride; }
+  fetch = purifier.fetchEntry (fetchers // { inherit pkgs; });
+  gitEntries = builtins.filter (entry: entry ? git) (
+    purifier.entriesFor pkgs.stdenv.hostPlatform.system lock
   );
 
   # One line per locked checkout: its path under GITLIBS, its repository
   # URL and its store path.
   checkouts = lib.concatMapStrings (
     entry: "${entry.path}\t${entry.git.url}\t${fetch entry}\n"
-  ) lock.git;
+  ) gitEntries;
 in
 runCommand "clojure-cli-purifier-gitlibs"
   {
@@ -45,7 +45,7 @@ runCommand "clojure-cli-purifier-gitlibs"
       git
     ];
     inherit checkouts;
-    repos = builtins.toJSON lock.gitRepos;
+    repos = builtins.toJSON lock.lockfile.gitRepos;
     passAsFile = [
       "checkouts"
       "repos"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 #
-# clojure-cli-purifier: locks the downloads of a deps.edn project, runs the
-# Clojure CLI on the locked downloads, and publishes what Nix built.
+# clojure-cli-purifier: locks the downloads of a deps.edn project,
+# prefetches them for the Clojure CLI, and publishes what Nix built.
 #
 # The package sets PURIFIER_LIB (the Nix library, nix/lib), PURIFIER_FORMAT
 # (the lock format version it reads), PURIFIER_HELPER (helper.clj),
@@ -15,7 +15,7 @@ lockName=clojure-cli-purifier.lock.json
 usage() {
   cat <<'EOF'
 Usage:
-  clojure-cli-purifier lock [--force] [--build ARGS]... [--test ARGS]...
+  clojure-cli-purifier lock [--lockfile PATH] [--force] [--build ARGS]... [--test ARGS]...
                             [--alias :NAME]... [--user-aliases]
                             [--source DIR] [--mirror ID=URL]...
       Runs the project with an empty local Maven repository and an empty
@@ -25,7 +25,8 @@ Usage:
 
       --build ARGS   A Clojure CLI command line the Nix build runs, such as
                      "-T:build uber". It may repeat. The default is the
-                     uber or jar function of build.clj, when there is one.
+                     uber or jar function of build.clj, when there is one
+                     and deps.edn has a :build alias.
       --test ARGS    A Clojure CLI command line the Nix build runs when its
                      checks are on, such as "-M:test". It may repeat.
       --alias :NAME  An alias to prepare. The default is every alias of
@@ -47,15 +48,22 @@ Usage:
       Each option replaces its part of an existing lockfile, and a relock
       keeps every part no option names. Without options or --force, an
       up-to-date lockfile is left as it is.
-  clojure-cli-purifier clojure ARGS...
-      Runs the Clojure CLI offline, with a local Maven repository and a
-      gitlibs directory that hold exactly the locked downloads.
-  clojure-cli-purifier publish [--repository ID=URL] [--dry-run]
-      Builds the project with Nix and deploys the jar and POM the build
-      made, without compiling anything outside the sandbox. The default
+  clojure-cli-purifier prefetch [--lockfile PATH]
+      Builds the locked downloads into the Nix store, keeps them alive with
+      a GC root in .clojure-cli-purifier beside the lockfile, and links
+      .clojure-cli-purifier/bin/clojure. With that directory first on PATH,
+      `clojure` runs on the locked downloads alone, with no network.
+  clojure-cli-purifier publish [--lockfile PATH] [--repository ID=URL] [--dry-run]
+      Builds the release of the project with Nix and deploys its jar and
+      POM, without compiling anything outside the sandbox. The default
       repository is Clojars, with CLOJARS_USERNAME and CLOJARS_PASSWORD.
       Another repository takes its credentials from the server of the same
       id in ~/.m2/settings.xml.
+
+  Every command takes --lockfile PATH, for a lockfile kept outside the
+  project. The environment variable CLOJURE_CLI_PURIFIER_LOCKFILE gives the
+  same path, and --lockfile takes precedence over it. The default is
+  clojure-cli-purifier.lock.json in the project root.
 EOF
 }
 
@@ -91,24 +99,65 @@ helper() {
   "$JAVA_CMD" -cp "$PURIFIER_TOOLS_JAR" clojure.main "$PURIFIER_HELPER" "$@"
 }
 
-# Whether the lockfile was made from this project definition, by this lock
-# format and with this Clojure CLI.
-lockIsCurrent() {
+# The lockfile of the project at root: the path given to --lockfile, then
+# the path in CLOJURE_CLI_PURIFIER_LOCKFILE, then clojure-cli-purifier.lock.json
+# in the project root. It prints an absolute path.
+lockFileOf() {
+  local root=$1 given=$2 path
+  path=${given:-${CLOJURE_CLI_PURIFIER_LOCKFILE:-$root/$lockName}}
+  case $path in
+  /*) echo "$path" ;;
+  *) echo "$(pwd)/$path" ;;
+  esac
+}
+
+# Prints why the lockfile does not fit the project at root, with the
+# command that fixes it, or nothing when the lockfile was made from this
+# project definition, by this lock format and with this Clojure CLI.
+lockProblem() {
   local root=$1 lockFile=$2 files sourceRoot
-  [ -f "$lockFile" ] || return 1
-  [ "$(jq -r .version "$lockFile")" = "$PURIFIER_FORMAT" ] || return 1
+  if [ ! -f "$lockFile" ]; then
+    echo "$lockFile does not exist; run clojure-cli-purifier lock"
+    return
+  fi
+  if ! jq -e 'type == "object"' "$lockFile" >/dev/null 2>&1; then
+    echo "$lockFile is not a JSON object, so it is not a clojure-cli-purifier lockfile; run clojure-cli-purifier lock --force"
+    return
+  fi
+  if [ "$(jq -r .version "$lockFile")" != "$PURIFIER_FORMAT" ]; then
+    echo "$lockFile has lock format version $(jq -r .version "$lockFile"), and this clojure-cli-purifier reads version $PURIFIER_FORMAT; run clojure-cli-purifier lock --force"
+    return
+  fi
+  if [ "$(jq -r .contentHash "$lockFile")" != "$(contentHash "$lockFile")" ]; then
+    echo "$lockFile does not match its contentHash, so it was edited after the lock run; run clojure-cli-purifier lock --force"
+    return
+  fi
   sourceRoot=$(sourceRootOf "$root" "$(lockProjectDir "$lockFile")")
   mapfile -t files < <(jq -r '.definitionFiles[]' "$lockFile")
-  [ "$(jq -r .definitionHash "$lockFile")" = "$(definitionHash "$sourceRoot" "${files[@]}")" ] &&
-    [ "$(jq -r .clojureVersion "$lockFile")" = "$(clojureVersion)" ]
+  if [ "$(jq -r .definitionHash "$lockFile")" != "$(definitionHash "$sourceRoot" "${files[@]}")" ]; then
+    echo "the project definition in $sourceRoot ($(jq -r '.definitionFiles | join(", ")' "$lockFile")) changed after $lockFile was made; run clojure-cli-purifier lock"
+    return
+  fi
+  if [ "$(jq -r .clojureVersion "$lockFile")" != "$(clojureVersion)" ]; then
+    echo "$lockFile was made with Clojure CLI $(jq -r .clojureVersion "$lockFile"), and this clojure-cli-purifier runs Clojure CLI $(clojureVersion); run clojure-cli-purifier lock"
+  fi
+}
+
+lockIsCurrent() {
+  [ -z "$(lockProblem "$1" "$2")" ]
 }
 
 cmdLock() {
-  local force=0 userAliases="" source=""
+  local force=0 userAliases="" source="" lockArg=""
   local -a builds=() tests=() aliases=() mirrorSpecs=()
   while [ $# -gt 0 ]; do
     case $1 in
     --force) force=1 ;;
+    --lockfile)
+      [ $# -ge 2 ] || die "lock: --lockfile takes a path"
+      lockArg=$2
+      shift
+      ;;
     --build)
       [ $# -ge 2 ] || die "lock: --build takes a command line"
       builds+=("$2")
@@ -143,7 +192,13 @@ cmdLock() {
 
   local root lockFile
   root=$(projectRoot)
-  lockFile="$root/$lockName"
+  lockFile=$(lockFileOf "$root" "$lockArg")
+  mkdir -p "$(dirname "$lockFile")"
+  # A relock starts from a valid lockfile only.
+  if [ -f "$lockFile" ] && ! jq -e 'type == "object"' "$lockFile" >/dev/null 2>&1; then
+    [ $force = 1 ] || die "$lockFile is not a JSON object; run clojure-cli-purifier lock --force"
+    rm "$lockFile"
+  fi
   local explicit=0
   if [ ${#builds[@]} -gt 0 ] || [ ${#tests[@]} -gt 0 ] || [ ${#aliases[@]} -gt 0 ] || [ -n "$userAliases" ] || [ -n "$source" ]; then
     explicit=1
@@ -179,7 +234,9 @@ cmdLock() {
   elif [ $hasLock = 1 ]; then
     buildJson=$(jq -c .build "$lockFile")
   else
-    if [ -f "$root/build.clj" ]; then
+    # The default build runs build.clj through the :build alias of deps.edn.
+    # A project whose build.clj runs under babashka has no :build alias.
+    if [ -f "$root/build.clj" ] && helper aliases "$root/deps.edn" | grep -qx ':build'; then
       if grep -q '(defn uber\b' "$root/build.clj"; then
         builds=("-T:build uber")
       elif grep -q '(defn jar\b' "$root/build.clj"; then
@@ -211,7 +268,7 @@ cmdLock() {
   # shellcheck disable=SC2064 # work is fixed from here on
   trap "chmod -R u+w '$work' 2>/dev/null; rm -rf '$work'" EXIT
   mkdir -p "$work/source" "$work/home" "$work/config" "$work/cache" "$work/gitlibs" "$work/java-tmp"
-  tar -C "$sourceRoot" --exclude=target --exclude=.cpcache --exclude=.git -cf - . | tar -C "$work/source" -xf -
+  tar -C "$sourceRoot" --exclude=target --exclude=.cpcache --exclude=.clojure-cli-purifier --exclude=.git -cf - . | tar -C "$work/source" -xf -
   local project="$work/source"
   if [ "$projectDir" != . ]; then project="$work/source/$projectDir"; fi
 
@@ -555,68 +612,124 @@ cmdLock() {
       metadata: $metadata,
       git: $git,
       gitRepos: $gitRepos
-    }' >"$lockFile.tmp"
+    }' >"$lockFile.content"
+  jq --arg contentHash "$(contentHash "$lockFile.content")" '. + { contentHash: $contentHash }' \
+    "$lockFile.content" >"$lockFile.tmp"
+  rm "$lockFile.content"
   mv "$lockFile.tmp" "$lockFile"
   echo "clojure-cli-purifier: wrote $lockFile ($(jq '.artifacts | length' "$lockFile") files, $(jq '.git | length' "$lockFile") git checkouts, $(jq '.outputs | length' "$lockFile") outputs)"
 }
 
-# Builds the environment of the lock into the store, keeps it alive with a
-# GC root in the state directory, and prints its store path.
-realizeEnv() {
-  local lockFile=$1 state=$2
-  mkdir -p "$state"
-  nix-build "$PURIFIER_LIB/realize.nix" --arg lockFile "$lockFile" \
-    --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
-    -o "$state/env" >/dev/null
-  readlink -f "$state/env"
+# The state directory of a lockfile: .clojure-cli-purifier beside it. It
+# holds the GC root `env`, the writable local repository under `home`, the
+# gitlibs directory `gitlibs`, the path of the lockfile in `lockfile`, and
+# `bin/clojure`, which runs the Clojure CLI on the locked downloads.
+stateOf() {
+  echo "$(dirname "$1")/.clojure-cli-purifier"
 }
 
-cmdClojure() {
-  local root lockFile
-  root=$(projectRoot)
-  lockFile="$root/$lockName"
-  [ -f "$lockFile" ] || die "$lockFile does not exist; run clojure-cli-purifier lock"
-  if ! lockIsCurrent "$root" "$lockFile"; then
-    echo "clojure-cli-purifier: $lockFile is out of date; the Clojure CLI resolves the usual way until clojure-cli-purifier lock renews it" >&2
-    exec clojure "$@"
-  fi
+cmdPrefetch() {
+  local lockArg=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --lockfile)
+      [ $# -ge 2 ] || die "prefetch: --lockfile takes a path"
+      lockArg=$2
+      shift
+      ;;
+    *) die "prefetch: unknown argument $1" ;;
+    esac
+    shift
+  done
 
-  local state="$root/.cpcache/clojure-cli-purifier" env
-  env=$(realizeEnv "$lockFile" "$state")
+  local root lockFile problem
+  root=$(projectRoot)
+  lockFile=$(lockFileOf "$root" "$lockArg")
+  problem=$(lockProblem "$root" "$lockFile")
+  [ -z "$problem" ] || die "$problem"
+
+  # nix-build keeps the environment alive with an indirect GC root at
+  # state/env.
+  local state env
+  state=$(stateOf "$lockFile")
+  mkdir -p "$state/bin"
+  local projectDir
+  projectDir=$(lockProjectDir "$lockFile")
+  nix-build "$PURIFIER_LIB/realize.nix" --argstr lockFile "$lockFile" \
+    --argstr src "$(sourceRootOf "$root" "$projectDir")" --argstr projectDir "$projectDir" \
+    --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
+    -o "$state/env" >/dev/null
+  env=$(readlink -f "$state/env")
 
   # The local repository is a writable tree of links into the store, and
   # the gitlibs directory holds writable copies of the checkouts, which a
-  # git dependency that needs preparing writes into. Both are made anew
-  # when the environment changes.
+  # git dependency that needs preparing writes into.
   local home="$state/home" gitlibs="$state/gitlibs"
-  if [ "$(cat "$state/env.path" 2>/dev/null || true)" != "$env" ]; then
-    chmod -R u+w "$home" "$gitlibs" 2>/dev/null || true
-    rm -rf "$home" "$gitlibs" "$state/cache"
-    mkdir -p "$home/.m2/repository" "$gitlibs"
-    cp -rs --no-preserve=mode "$env/repository/." "$home/.m2/repository"
-    # Maven Resolver rewrites the metadata records it reads, so those are
-    # writable copies.
-    find "$home/.m2/repository" -type l \( -name 'maven-metadata*.xml' -o -name resolver-status.properties \) \
-      -exec cp --no-preserve=mode -L {} {}.tmp \; -exec mv {}.tmp {} \;
-    cp -rL --no-preserve=mode "$env/gitlibs/." "$gitlibs"
-    echo "$env" >"$state/env.path"
-  fi
+  chmod -R u+w "$home" "$gitlibs" 2>/dev/null || true
+  rm -rf "$home" "$gitlibs" "$state/cache"
+  mkdir -p "$home/.m2/repository" "$gitlibs"
+  cp -rs --no-preserve=mode "$env/repository/." "$home/.m2/repository"
+  # Maven Resolver rewrites the metadata records it reads, so those are
+  # writable copies.
+  find "$home/.m2/repository" -type l \( -name 'maven-metadata*.xml' -o -name resolver-status.properties \) \
+    -exec cp --no-preserve=mode -L {} {}.tmp \; -exec mv {}.tmp {} \;
+  cp -rL --no-preserve=mode "$env/gitlibs/." "$gitlibs"
+  echo "$lockFile" >"$state/lockfile"
+  jq -r .contentHash "$lockFile" >"$state/prefetched"
+  ln -sfn "$(readlink -f "$0")" "$state/bin/clojure"
+
+  # The git dependencies that need preparing are prepared now, as the Nix
+  # build prepares them.
+  "$state/bin/clojure" -X:deps prep :aliases "[$(jq -r '.prepared | join(" ")' "$lockFile")]" >/dev/null
+  echo "clojure-cli-purifier: prefetched $(jq '.artifacts | length' "$lockFile") files and $(jq '.git | length' "$lockFile") git checkouts for $root"
+  echo "clojure-cli-purifier: put $state/bin first on PATH, and \`clojure\` runs on them with no network"
+}
+
+# `clojure` in the state directory of a lockfile: the Clojure CLI, with the
+# prefetched local repository and gitlibs directory in place of those in the
+# home directory.
+runClojure() {
+  local state lockFile root problem
+  state=$(cd "$(dirname "$0")/.." && pwd)
+  [ -f "$state/lockfile" ] || die "$state holds no prefetch; run clojure-cli-purifier prefetch"
+  lockFile=$(cat "$state/lockfile")
+  root=$(projectRoot)
+  problem=$(lockProblem "$root" "$lockFile")
+  [ -z "$problem" ] || die "$problem"
+  [ "$(cat "$state/prefetched")" = "$(jq -r .contentHash "$lockFile")" ] ||
+    die "$lockFile changed after the last prefetch; run clojure-cli-purifier prefetch"
 
   # The JVMs find the local repository through user.home. The Clojure CLI
   # configuration of the user stays in effect. Git trusts the checkouts,
   # which the store owns.
-  export GITLIBS="$gitlibs"
+  export GITLIBS="$state/gitlibs"
   export CLJ_CACHE="$state/cache"
-  export CLJ_JVM_OPTS="-Duser.home=$home ${CLJ_JVM_OPTS:-}"
-  export JAVA_OPTS="-Duser.home=$home ${JAVA_OPTS:-}"
+  export CLJ_JVM_OPTS="-Duser.home=$state/home ${CLJ_JVM_OPTS:-}"
+  export JAVA_OPTS="-Duser.home=$state/home ${JAVA_OPTS:-}"
   export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
-  exec clojure "$@"
+
+  # The standard error of the Clojure CLI also goes to a log. When it fails
+  # to resolve a download, the lockfile lacks that download.
+  local log status=0
+  log=$(mktemp "${TMPDIR:-/tmp}/clojure-cli-purifier-clojure.XXXXXX")
+  clojure "$@" 2> >(tee "$log" >&2) || status=$?
+  wait
+  if [ $status != 0 ] && grep -qE 'could not be resolved|Could not transfer|Could not find artifact|Failed to read artifact descriptor|Unable to clone|Network is unreachable' "$log"; then
+    echo "clojure-cli-purifier: the Clojure CLI tried to download something $lockFile does not hold; run clojure-cli-purifier lock, then clojure-cli-purifier prefetch" >&2
+  fi
+  rm -f "$log"
+  return $status
 }
 
 cmdPublish() {
-  local repository="" dryRun=0
+  local repository="" dryRun=0 lockArg=""
   while [ $# -gt 0 ]; do
     case $1 in
+    --lockfile)
+      [ $# -ge 2 ] || die "publish: --lockfile takes a path"
+      lockArg=$2
+      shift
+      ;;
     --repository)
       [ $# -ge 2 ] || die "publish: --repository takes ID=URL"
       repository=$2
@@ -628,24 +741,26 @@ cmdPublish() {
     shift
   done
 
-  local root lockFile
+  local root lockFile problem
   root=$(projectRoot)
-  lockFile="$root/$lockName"
-  lockIsCurrent "$root" "$lockFile" || die "$lockFile is missing or out of date; run clojure-cli-purifier lock"
+  lockFile=$(lockFileOf "$root" "$lockArg")
+  problem=$(lockProblem "$root" "$lockFile")
+  [ -z "$problem" ] || die "$problem"
   [ "$(jq -r .pom "$lockFile")" != null ] || die "the build of the lock writes no POM, which publishing needs"
 
-  local name version jar pom package
+  local name version jar pom release
   name=$(jq -r .project.name "$lockFile")
   version=$(jq -r .project.version "$lockFile")
   jq -e --arg jar "$name-$version.jar" 'any(.outputs[]; (.path | split("/") | last) == $jar)' "$lockFile" >/dev/null ||
     die "the build of the lock makes no $name-$version.jar to publish"
   local projectDir
   projectDir=$(lockProjectDir "$lockFile")
-  package=$(nix-build --no-out-link "$PURIFIER_LIB/package.nix" \
+  release=$(nix-build --no-out-link "$PURIFIER_LIB/release.nix" \
     --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
-    --argstr src "$(sourceRootOf "$root" "$projectDir")" --argstr projectDir "$projectDir")
-  jar="$package/share/java/$name-$version.jar"
-  pom="$package/share/java/$name-$version.pom"
+    --argstr src "$(sourceRootOf "$root" "$projectDir")" --argstr projectDir "$projectDir" \
+    --argstr lockFile "$lockFile")
+  jar="$release/$name-$version.jar"
+  pom="$release/$name-$version.pom"
 
   # deps-deploy runs on the classpath the package resolved from its own
   # lockfile, so publishing downloads nothing and only uploads.
@@ -666,14 +781,21 @@ cmdPublish() {
   "$JAVA_CMD" -cp "$(cat "$PURIFIER_DEPLOY_CLASSPATH")" clojure.main -e "$expression"
 }
 
+# Linked as bin/clojure in a state directory, this script is the Clojure
+# CLI on the prefetched downloads.
+if [ "$(basename "$0")" = clojure ]; then
+  runClojure "$@"
+  exit
+fi
+
 case ${1:-} in
 lock)
   shift
   cmdLock "$@"
   ;;
-clojure)
+prefetch)
   shift
-  cmdClojure "$@"
+  cmdPrefetch "$@"
   ;;
 publish)
   shift

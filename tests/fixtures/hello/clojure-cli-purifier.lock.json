@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "clojureVersion": "1.12.6.1673",
   "javaVersion": "21.0.12.1",
   "projectDir": ".",
@@ -1326,13 +1326,17 @@
     {
       "path": "org/clojure/clojure/1.12.3/clojure-1.12.3.jar",
       "url": "https://repo1.maven.org/maven2/org/clojure/clojure/1.12.3/clojure-1.12.3.jar",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/clojure/1.12.3/clojure-1.12.3.jar"
+      ],
       "hash": "sha256-yyoaPbHCzXbvT6SlRdWmXxCxtIt/dnLwoQn1R28FcWY="
     },
     {
       "path": "org/clojure/clojure/1.12.3/clojure-1.12.3.pom",
       "url": "https://repo1.maven.org/maven2/org/clojure/clojure/1.12.3/clojure-1.12.3.pom",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/clojure/1.12.3/clojure-1.12.3.pom"
+      ],
       "hash": "sha256-q2CmyyuMxXyG21ECte4p8hWsg8/20wEblV+fxb5dAZ0="
     },
     {
@@ -1434,25 +1438,33 @@
     {
       "path": "org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.jar",
       "url": "https://repo1.maven.org/maven2/org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.jar",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.jar"
+      ],
       "hash": "sha256-63OsCM9JuoQMiLpnvu8RM2ylVDM9lAiAjXiUbg/rnds="
     },
     {
       "path": "org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.pom",
       "url": "https://repo1.maven.org/maven2/org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.pom",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.pom"
+      ],
       "hash": "sha256-M0EOuKpz1S2Vez3G4KZfOZisBiPL2BPZDDPm5onEJCk="
     },
     {
       "path": "org/clojure/data.json/2.5.1/data.json-2.5.1.jar",
       "url": "https://repo1.maven.org/maven2/org/clojure/data.json/2.5.1/data.json-2.5.1.jar",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/data.json/2.5.1/data.json-2.5.1.jar"
+      ],
       "hash": "sha256-baVzUeM0FzyF3qFpbH1IR6Tz4R266zl9pl56JoSelLM="
     },
     {
       "path": "org/clojure/data.json/2.5.1/data.json-2.5.1.pom",
       "url": "https://repo1.maven.org/maven2/org/clojure/data.json/2.5.1/data.json-2.5.1.pom",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/data.json/2.5.1/data.json-2.5.1.pom"
+      ],
       "hash": "sha256-tBfgp+NmmIcfrqjbY7S8g6XSCPms9js4SxDMGpbxcNU="
     },
     {
@@ -1578,7 +1590,9 @@
     {
       "path": "org/clojure/pom.contrib/1.2.0/pom.contrib-1.2.0.pom",
       "url": "https://repo1.maven.org/maven2/org/clojure/pom.contrib/1.2.0/pom.contrib-1.2.0.pom",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/pom.contrib/1.2.0/pom.contrib-1.2.0.pom"
+      ],
       "hash": "sha256-CRbXpBVYuVAKQnyIb6KYJ6zlJZIGvjrTPmTilvwaYRE="
     },
     {
@@ -1592,13 +1606,17 @@
     {
       "path": "org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.jar",
       "url": "https://repo1.maven.org/maven2/org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.jar",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.jar"
+      ],
       "hash": "sha256-lM2ZtupjlkHzevSGCmQ7btOZ7lqL5dcXz/C2Y8jXUHc="
     },
     {
       "path": "org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.pom",
       "url": "https://repo1.maven.org/maven2/org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.pom",
-      "mirrors": [],
+      "mirrors": [
+        "https://maven-central.storage-download.googleapis.com/maven2/org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.pom"
+      ],
       "hash": "sha256-PLp+DcwIXEzpLd3/6iJhJP+sF4vnm9A3m1suMKlpy+o="
     },
     {
@@ -2409,15 +2427,15 @@
     },
     {
       "path": "hiccup/hiccup/1.0.0-SNAPSHOT/resolver-status.properties",
-      "contents": "maven-metadata-clojars.xml.lastUpdated=4102444800000\nmaven-metadata-purifier-central.xml.error=\nmaven-metadata-purifier-central.xml.lastUpdated=4102444800000\n"
+      "contents": "maven-metadata-clojars.xml.lastUpdated=4102444800000\nmaven-metadata-central.xml.error=\nmaven-metadata-central.xml.lastUpdated=4102444800000\n"
     },
     {
-      "path": "org/clojure/core.memoize/maven-metadata-purifier-central.xml",
+      "path": "org/clojure/core.memoize/maven-metadata-central.xml",
       "contents": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n  <groupId>org.clojure</groupId>\n  <artifactId>core.memoize</artifactId>\n  <versioning>\n    <latest>1.2.281</latest>\n    <release>1.2.281</release>\n    <versions>\n      <version>0.5.0</version>\n      <version>0.5.1</version>\n      <version>0.5.2</version>\n      <version>0.5.3</version>\n      <version>0.5.4</version>\n      <version>0.5.5</version>\n      <version>0.5.6</version>\n      <version>0.5.7</version>\n      <version>0.5.8</version>\n      <version>0.5.9</version>\n      <version>0.7.0</version>\n      <version>0.7.1</version>\n      <version>0.7.2</version>\n      <version>0.8.2</version>\n      <version>1.0.236</version>\n      <version>1.0.250</version>\n      <version>1.0.253</version>\n      <version>1.0.257</version>\n      <version>1.1.266</version>\n      <version>1.2.273</version>\n      <version>1.2.278</version>\n      <version>1.2.281</version>\n    </versions>\n    <lastUpdated>20260225192929</lastUpdated>\n  </versioning>\n</metadata>\n"
     },
     {
       "path": "org/clojure/core.memoize/resolver-status.properties",
-      "contents": "maven-metadata-clojars.xml.error=\nmaven-metadata-clojars.xml.lastUpdated=4102444800000\nmaven-metadata-purifier-central.xml.lastUpdated=4102444800000\n"
+      "contents": "maven-metadata-clojars.xml.error=\nmaven-metadata-clojars.xml.lastUpdated=4102444800000\nmaven-metadata-central.xml.lastUpdated=4102444800000\n"
     }
   ],
   "git": [
@@ -2477,5 +2495,6 @@
         "v0.5.1": "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"
       }
     }
-  ]
+  ],
+  "contentHash": "ac4578cda60b876ac6875d643f99dbb8bc69c4d601de9af8baaba85f5540f002"
 }

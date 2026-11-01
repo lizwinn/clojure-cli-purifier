@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 #
 # The clojure-cli-purifier command: `clojure-cli-purifier lock` writes a
-# project's lockfile, `clojure-cli-purifier clojure` runs the Clojure CLI
-# offline on the locked downloads, and `clojure-cli-purifier publish`
-# deploys what Nix built. It calls the nix-build and nix-hash of the Nix
+# project's lockfile, `clojure-cli-purifier prefetch` builds the locked
+# downloads into the store for an offline Clojure CLI, and
+# `clojure-cli-purifier publish` deploys what Nix built. It calls the nix-build and nix-hash of the Nix
 # installation it runs on.
 {
   lib,
   writeShellApplication,
   runCommand,
-  buildClojureCliProject,
+  callPackage,
   clojure,
   # The JVM of the Clojure CLI. The lock records its version, and the Nix
   # build runs on a JDK of the same major version.
@@ -23,9 +23,12 @@
   gnused,
   gnugrep,
   gawk,
-  # The nixpkgs source of this package set, which the interactive mode and
-  # the publish step build with.
+  # The nixpkgs source of this package set, which the prefetch and the
+  # publish step build with.
   path,
+  # The functions of the shared purifier library, which the default package
+  # overlay of this flake passes.
+  purifier ? throw "clojure-cli-purifier: the command needs the shared purifier library; take it from the default package overlay of the clojure-cli-purifier flake",
 }:
 let
   jdk = jdk_headless;
@@ -40,7 +43,10 @@ let
   # run.
   deployLock = ./deploy + "/clojure-cli-purifier.lock.json";
   hasDeployLock = builtins.pathExists deployLock;
-  deployRepository = (buildClojureCliProject { src = ./deploy; }).repository;
+  deployRepository = callPackage ../../nix/lib/repository.nix {
+    inherit purifier;
+    lock = purifier.checkLock (import ../../nix/lib/read-lock.nix { src = ./deploy; });
+  };
 
   # The shared purifier library this flake locks, as a flake reference the
   # interactive mode and the publish step evaluate it from.

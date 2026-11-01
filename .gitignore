@@ -2,3 +2,4 @@
 target/
 .cpcache/
 .nrepl-port
+.clojure-cli-purifier/

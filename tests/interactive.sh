@@ -5,9 +5,11 @@
 # hello fixture:
 #
 #   - `clojure-cli-purifier lock` leaves an up-to-date lockfile as it is;
-#   - `clojure-cli-purifier clojure` runs the tests, the SNAPSHOT and the
-#     version range aliases, and the uberjar build with no network access,
-#     from the locked downloads alone;
+#   - after `clojure-cli-purifier prefetch`, `clojure` runs the tests, the
+#     SNAPSHOT and the version range aliases, and the uberjar build with no
+#     network access, from the locked downloads alone;
+#   - a lockfile kept outside the project works through --lockfile and
+#     CLOJURE_CLI_PURIFIER_LOCKFILE;
 #   - `clojure-cli-purifier publish` deploys the jar and POM that Nix built
 #     to a file repository.
 #
@@ -29,17 +31,23 @@ cd "$work/hello"
 # The Clojure CLI creates its user configuration on first use, so the test
 # gives it one of its own.
 export CLJ_CONFIG="$work/config"
+# Every lock run downloads Maven Central's files from Google's mirror of
+# it, as the fixtures were locked.
+mirror=central=https://maven-central.storage-download.googleapis.com/maven2/
 
 echo "== lock leaves an up-to-date lockfile alone"
 "$cli" lock | grep -q 'is up to date'
 
-echo "== offline runs from the locked downloads"
+echo "== after prefetch, clojure runs offline from the locked downloads"
+"$cli" prefetch
+test -L .clojure-cli-purifier/env
 (
   unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
-  "$cli" clojure -M:test | grep -q '0 failures, 0 errors'
-  "$cli" clojure -M:snapshot | grep -qx '<b>snapshot</b>'
-  "$cli" clojure -M:range | grep -qx 'range 49'
-  "$cli" clojure -T:build uber
+  export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+  clojure -M:test | grep -q '0 failures, 0 errors'
+  clojure -M:snapshot | grep -qx '<b>snapshot</b>'
+  clojure -M:range | grep -qx 'range 49'
+  clojure -T:build uber
   "$java" -jar target/hello-1.0.0-standalone.jar | grep -qx '<p>purified</p>'
 )
 
@@ -61,12 +69,20 @@ mkdir -p "$CLJ_CONFIG"
 # The Clojure CLI copied its read-only example deps.edn here on first use.
 rm -f "$CLJ_CONFIG/deps.edn"
 echo '{:aliases {:nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.3.0"}}}}}' >"$CLJ_CONFIG/deps.edn"
-"$cli" lock --user-aliases
+"$cli" lock --user-aliases --mirror "$mirror"
 # The relock kept the commands of the lockfile.
 test "$("$jq" '.test | length' clojure-cli-purifier.lock.json)" = 3
+# The prefetch of the old lockfile is refused until prefetch runs again.
+if PATH="$PWD/.clojure-cli-purifier/bin:$PATH" clojure -M:test 2>"$work/old-prefetch.log"; then
+  echo "clojure ran on the prefetch of the old lockfile" >&2
+  exit 1
+fi
+grep -q 'run clojure-cli-purifier prefetch' "$work/old-prefetch.log"
+"$cli" prefetch
 (
   unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
-  "$cli" clojure -M:nrepl -m nrepl.cmdline --help | grep -q -- '--interactive'
+  export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+  clojure -M:nrepl -m nrepl.cmdline --help | grep -q -- '--interactive'
 )
 
 echo "== git dependencies that need preparing, and two commits of one library"
@@ -120,7 +136,7 @@ cat >"$app/src/app/main.clj" <<'EOF'
 (ns app.main (:require [gen.value :as g] [lib.core :as l]))
 (defn -main [& _] (println "value" g/v (l/which)))
 EOF
-(cd "$app" && "$cli" lock --test "-M:run")
+(cd "$app" && "$cli" lock --test "-M:run" --mirror "$mirror")
 lock="$app/clojure-cli-purifier.lock.json"
 test "$("$jq" '[.git[] | select(.git.url == "'"$url"'")] | length' "$lock")" = 2
 test "$("$jq" '.gitRepos[0].commits | length' "$lock")" = 2
@@ -131,32 +147,45 @@ test "$("$jq" -r '.gitRepos[0].tags.v1' "$lock")" = "$one"
 built=$(nix build --no-link --print-out-paths --impure --expr "
   let
     flake = builtins.getFlake \"path:$root\";
-    pkgs = import flake.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ flake.overlays.default ];
-    };
   in
-  (pkgs.buildClojureCliProject {
+  (flake.lib.clojure-cli-purifier.buildClojureCliProject {
+    pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     src = /. + \"$app\";
-    doCheck = true;
-    fetchgit = args: builtins.fetchGit {
+    fetchers.fetchgit = args: builtins.fetchGit {
       inherit (args) url rev;
       narHash = args.hash;
       allRefs = true;
     };
-  }).package")
+  }).tests")
 test -d "$built"
 nix log "$built" | grep -qx 'value 42 two'
 
 (
-  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
   cd "$app"
-  "$cli" clojure -M:run | grep -qx 'value 42 two'
+  "$cli" prefetch
+  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+  export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+  clojure -M:run | grep -qx 'value 42 two'
 )
+
+echo "== a lockfile kept outside the project, by flag and by environment"
+external="$work/packaging/clojure-cli-purifier.lock.json"
+cp -r "$root/tests/fixtures/mono" "$work/external"
+rm "$work/external/app/clojure-cli-purifier.lock.json"
+(
+  cd "$work/external/app"
+  "$cli" lock --lockfile "$external" --source .. --test "-M:run" --mirror "$mirror"
+  test ! -e clojure-cli-purifier.lock.json
+  CLOJURE_CLI_PURIFIER_LOCKFILE="$external" "$cli" prefetch
+  test -L "$work/packaging/.clojure-cli-purifier/env"
+  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+  "$work/packaging/.clojure-cli-purifier/bin/clojure" -M:run | grep -qx '{"from":"lib"}'
+)
+cmp "$external" "$root/tests/fixtures/mono/app/clojure-cli-purifier.lock.json"
 
 echo "== a lock through a mirror records the repository URL and the mirror"
 cp -r "$root/tests/fixtures/mono" "$work/mono"
-(cd "$work/mono/app" && "$cli" lock --force --mirror central=https://maven-central.storage-download.googleapis.com/maven2/)
+(cd "$work/mono/app" && "$cli" lock --force --mirror "$mirror")
 mirrored="$work/mono/app/clojure-cli-purifier.lock.json"
 test "$("$jq" '[.artifacts[] | select(.url | startswith("https://repo1.maven.org/maven2/"))] | length' "$mirrored")" -gt 0
 test "$("$jq" '[.artifacts[] | select((.url | startswith("https://repo1.maven.org/maven2/")) and (.mirrors | length) != 1)] | length' "$mirrored")" = 0

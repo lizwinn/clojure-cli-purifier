@@ -38,6 +38,14 @@ definitionHash() {
 
 # The directory of the project relative to its source root, as the
 # lockfile records it.
+# The content hash of a lockfile: the SHA-256 of the lockfile without its
+# contentHash field, as JSON with sorted keys and no spaces. The function
+# builtins.toJSON writes the same text, so read-lock.nix computes the same
+# hash.
+contentHash() {
+  jq -S -c 'del(.contentHash)' "$1" | tr -d '\n' | sha256sum | cut -d' ' -f1
+}
+
 lockProjectDir() {
   jq -r '.projectDir // "."' "$1"
 }

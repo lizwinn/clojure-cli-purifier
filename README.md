@@ -3,100 +3,23 @@
 A command and a Nix library that build Clojure projects of the
 [Clojure CLI](https://clojure.org/reference/clojure_cli) (`deps.edn`
 projects) in the Nix sandbox. The command records the files the Clojure CLI
-wants to download in a lockfile, and Nix builds the project from that
-lockfile, offline. You commit the lockfile, and no generated Nix files.
+downloads in a lockfile, and Nix builds the project from that lockfile,
+offline. The project commits the lockfile, and no generated Nix files.
 
 clojure-cli-purifier is one of the
-[nix-purifiers](https://nix-purifiers.github.io).
+[nix-purifiers](https://nix-purifiers.github.io), and it meets their
+[contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
-- **A lockfile.** `clojure-cli-purifier lock` writes
-  `clojure-cli-purifier.lock.json` at the project root. It holds every file
-  the Clojure CLI downloads, by the URL it came from and its SHA-256, every
-  git dependency with the commits and tags the CLI reads, and the build and
-  test commands. It also names the jars the build produces, the POM it
-  writes and the main class of an uberjar, so Nix knows every output when
-  it evaluates.
-- **Sandboxed builds.** `buildClojureCliProject` runs the locked build
-  commands in the sandbox, and gives a package with the jars and the POM in
-  `share/java`, and a launcher in `bin` for an uberjar with a main class.
-- **The Clojure CLI on the locked downloads.** `clojure-cli-purifier clojure`
-  runs the Clojure CLI offline, with a local Maven repository and a
-  gitlibs directory that hold exactly the locked downloads.
-- **Publishing what Nix built.** `clojure-cli-purifier publish` builds the
-  package with Nix and deploys its jar and POM to Clojars or another Maven
-  repository.
-
-## How the lock is made
-
-`clojure-cli-purifier lock` copies the project, or the source root that
-holds it, to a temporary directory
-and runs the Clojure CLI there with an empty local Maven repository, an
-empty gitlibs directory (`GITLIBS`) and an empty user `deps.edn`. That is
-the environment a sandboxed build has. It prepares the classpath of the
-project and of each alias (`clojure -P -M:<alias>`), prepares the git
-dependencies that need it (`clojure -X:deps prep`), and runs the build and
-test commands. Everything the CLI, tools.build and the test runner
-download lands in the empty repositories, and the lockfile records it:
-
-- files from any Maven repository, Maven Central and Clojars included, and
-  from the repositories `deps.edn` adds with `:mvn/repos`. Each file is
-  locked with the URL of the repository Maven Resolver recorded for it,
-  which is a mirror's URL when `~/.m2/settings.xml` configures a mirror;
-- version ranges and SNAPSHOT versions. Maven Resolver picks those from
-  repository metadata, whose content changes over time at its URL, so the
-  lockfile holds the content the lock run read, and the build resolves to
-  the versions the lock run picked. A SNAPSHOT file is locked at its
-  timestamped URL;
-- git dependencies, given by `:git/sha` alone or with `:git/tag`. Each
-  checkout is locked with the hash `nix-prefetch-git` reports for it. The
-  Clojure CLI expands a short commit and checks a tag in a bare clone of
-  the repository, so the lockfile also holds the commit objects and the
-  tags the CLI reads, and the Nix build rebuilds the bare clone from them
-  and from the checkout. A rebuilt commit has exactly the locked hash,
-  because a commit object names its tree and parents by hash;
-- the dependencies a POM chooses by architecture. The lock run resolves the
-  project once more for each Linux architecture the flake builds for
-  (`amd64` and `aarch64`), with the matching `os.arch`;
-- `:local/root` dependencies. They are not downloads: the build takes them
-  from the source. A local dependency outside the project, such as a
-  sibling directory in a repository with several projects, needs a source
-  root that holds both: `lock --source DIR` names it, the lockfile records
-  where the project lies in it, and the Nix build takes that directory as
-  `src` with `projectDir` naming the project.
-
-Maven Resolver reads its proxy only from `settings.xml`. The lock run uses
-the `~/.m2/settings.xml` of the user, with its proxies, mirrors and
-repository credentials, and otherwise writes one with the proxy of
-`https_proxy`.
-
-The lock is current while `deps.edn`, `build.clj`, every other `deps.edn`
-of the source root and the version of the Clojure CLI are unchanged. `clojure-cli-purifier lock` leaves a current lockfile alone, and
-`--force` relocks regardless.
-
-## Use
+## Quickstart
 
 Lock the project from its root, naming the build and test commands, and
-commit the lockfile:
+commit `clojure-cli-purifier.lock.json`:
 
 ```zsh
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
 ```
 
-`--build` and `--test` may repeat. Without `--build`, the build is the
-`uber` function of `build.clj`, or its `jar` function. `--alias :name`
-limits the aliases the lock prepares, which are all aliases of `deps.edn`
-by default. Each option replaces its part of an existing lockfile, and a
-relock keeps every part no option names.
-
-The flake's `overlays.default` adds `buildClojureCliProject` to a package
-set, and a package written for `callPackage` takes it by name, like any
-other builder:
-
-```nix
-# package.nix
-{ buildClojureCliProject }:
-(buildClojureCliProject { src = ./.; }).package
-```
+Then build it with the library of the flake:
 
 ```nix
 {
@@ -106,100 +29,222 @@ other builder:
   outputs = { nixpkgs, clojure-cli-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [
-          clojure-cli-purifier.overlays.default
-          (final: prev: { hello = final.callPackage ./package.nix { }; })
-        ];
+      pkgs = nixpkgs.legacyPackages.${system};
+      project = clojure-cli-purifier.lib.clojure-cli-purifier.buildClojureCliProject {
+        inherit pkgs;
+        src = ./.;
       };
     in
     {
-      packages.${system}.default = pkgs.hello;
+      packages.${system}.default = project.packages.hello;
+      checks.${system}.tests = project.tests;
     };
 }
 ```
 
-`buildClojureCliProject` takes `src`, which is the project root or the
-source root the lock was made with. `projectDir` names the directory of
-the project in `src`. It is `"."` by default, and it must match the
-lockfile. `lockFile` defaults to the lockfile in the project directory.
-`doCheck` runs the test commands of the lock after the build. `jdk`
-defaults to the headless JDK of the major version the lock was made with.
-`fetchurl` and `fetchgit` replace the fetchers of nixpkgs, for credentials
-or a local mirror. `srcFilter` filters the source before it goes into the
-store.
+`buildClojureCliProject` takes these arguments:
 
-It returns `package` (also as `packages.<name>`), `repository` and
-`gitlibs` (the local Maven repository and the gitlibs directory of the
-lock), `lock`, `jdk` and `clojure`. `package.artifacts."<file>"` is each
-file of the package, such as `artifacts."hello-1.0.0-standalone.jar"`,
-known from the lockfile before anything is built.
+- `pkgs` is the package set the build runs with.
+- `src` is the project root, or the source root the lock was made with.
+- `projectDir` names the directory of the project in `src`. It is `"."` by
+  default, and it must match the lockfile.
+- `lockFile` is the lockfile. It defaults to `clojure-cli-purifier.lock.json`
+  in the project directory.
+- `fetchers` replaces fetchers of nixpkgs, for credentials or a mirror. The
+  [purifier](https://github.com/nix-purifiers/purifier) library's
+  `fetchEntry` and `tree` take it.
+- `jdk` defaults to the headless JDK of the major version the lock was made
+  with.
+- `srcFilter` filters the source before it goes into the store.
 
-### Private repositories
+The result has these attributes:
 
-A Maven repository that needs credentials takes them through `fetchurl`,
-for example nixpkgs' `fetchurl` with `netrcPhase`. A git dependency over
-ssh needs the credentials of the user, which the sandbox does not have.
-`builtins.fetchGit` fetches at evaluation time with the ssh agent and the
-git configuration of the user, and still checks the locked hash:
+- `packages.<name>` holds the jars and the POM in `share/java`, and a
+  launcher in `bin` for each uberjar with a main class. `<name>` is the
+  artifact id of the POM the build writes, or the name of the project
+  directory.
+- `tests` is the same build, which also runs the test commands of the lock.
+- `release` holds `<artifactId>-<version>.jar` and its POM, which `publish`
+  deploys.
+- `fetches` lists the Maven files and git checkouts of the build as entries
+  of the purifier library.
+- `repository` and `gitlibs` are the local Maven repository and the
+  gitlibs directory of the lock.
+
+The lockfile names the jars, the POM and the main classes the build
+produces, so Nix knows every attribute and every output at evaluation,
+without import-from-derivation.
+
+`lib.clojure-cli-purifier.readLock { src, projectDir ? ".", lockFile ? ... }`
+reads the lockfile into the shape that every nix-purifier gives, for tools
+such as SBOM generators. Its `entries` are the Maven files, the recorded
+repository metadata and the git checkouts, and its `outputs` name the
+package. Its `problems` list why the lockfile cannot be used, each with
+the command that fixes it. The builder fails evaluation with them.
+
+A project can keep its build external, with the lockfile outside its
+source, so that a packaging flake builds a project its author does not
+change. The flake passes the lockfile as `lockFile`. Every command takes
+`--lockfile PATH` or the environment variable
+`CLOJURE_CLI_PURIFIER_LOCKFILE`, which a dev shell can set to the same
+path. The flag takes precedence over the variable.
+
+## Everyday loop
+
+`clojure-cli-purifier prefetch` builds the downloads of the lockfile into
+the Nix store, and links `.clojure-cli-purifier/bin/clojure` beside the
+lockfile. With that directory first on `PATH`, the project's own `clojure`
+commands run on the locked downloads:
+
+```zsh
+clojure-cli-purifier prefetch
+export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+clojure -M:test
+clojure -T:build uber
+```
+
+With [direnv](https://direnv.net), an `.envrc` with
+`PATH_add .clojure-cli-purifier/bin` sets the same `PATH`. We recommend
+adding `.clojure-cli-purifier/` to `.gitignore`.
+
+To add or upgrade a dependency, edit `deps.edn`, then run
+`clojure-cli-purifier lock` and `clojure-cli-purifier prefetch`. A relock
+keeps the build and test commands of the lockfile. `--build`, `--test`,
+`--alias :name` and `--user-aliases` each replace their part of the
+lockfile.
+
+The user `deps.edn` stays in effect. `lock --user-aliases` also locks its
+aliases, so that tools kept there, such as an nREPL alias, run offline too.
+
+`clojure-cli-purifier publish` builds the `release` with Nix and deploys its
+jar and POM with [deps-deploy](https://github.com/slipset/deps-deploy).
+Nothing is compiled outside the sandbox. The default repository is
+Clojars, with `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`.
+`--repository ID=URL` deploys to another Maven repository, with the
+credentials of the server of the same id in `~/.m2/settings.xml`.
+`--dry-run` prints what it would deploy.
+
+## Offline work
+
+After a prefetch, `clojure` needs no network. The Maven repository and the
+gitlibs directory under `.clojure-cli-purifier` hold exactly the locked
+downloads, the git dependencies that need preparing are prepared, and the
+JDK and the Clojure CLI come from the store. `.clojure-cli-purifier/env` is
+a garbage-collector root, so `nix-collect-garbage` keeps the downloads
+while it exists.
+
+The `conformance-offline` check runs the tests, a SNAPSHOT, a version range
+and an uberjar build of a fixture after a prefetch, in the Nix sandbox,
+which has no network.
+
+## Editor
+
+[clojure-lsp](https://clojure-lsp.io) computes the classpath with
+`clojure -Spath`, so it reads the locked downloads when the editor's
+environment has `.clojure-cli-purifier/bin` first on `PATH`, such as
+through direnv. In a project with a `bb.edn`, clojure-lsp asks babashka for
+the classpath, and `.lsp/config.edn` points it at `deps.edn`:
+
+```clojure
+{:project-specs [{:project-path "deps.edn"
+                  :classpath-cmd ["clojure" "-A:test" "-Spath"]}]}
+```
+
+clojure-lsp analyzes the jars on the classpath, which hold the Clojure
+sources, and needs no other download.
+
+## Errors and fixes
+
+| Message | Fix |
+| --- | --- |
+| `the project definition in … changed after … was made; run clojure-cli-purifier lock` | Run `clojure-cli-purifier lock`. |
+| `… does not match its contentHash, so it was edited after the lock run` | Run `clojure-cli-purifier lock --force`. |
+| `… is not a JSON object, so it is not a clojure-cli-purifier lockfile` | Run `clojure-cli-purifier lock --force`. |
+| `… has lock format version …` | Run `clojure-cli-purifier lock --force`. |
+| `… was made with Clojure CLI …` | Run `clojure-cli-purifier lock`, with the clojure-cli-purifier of the package set that builds the project. |
+| `the Clojure CLI tried to download something … does not hold` | Run `clojure-cli-purifier lock`, then `clojure-cli-purifier prefetch`. |
+| `… changed after the last prefetch` | Run `clojure-cli-purifier prefetch`. |
+| `hash mismatch in fixed-output derivation` | The server changed a file under its URL. Run `clojure-cli-purifier lock --force`. |
+
+The builder refuses an invalid lockfile at evaluation, and the commands
+refuse it before they run anything.
+
+## Sources supported and refused
+
+`clojure-cli-purifier lock` copies the project, or the source root that
+holds it, to a temporary directory. It runs the Clojure CLI there with an
+empty local Maven repository, an empty gitlibs directory (`GITLIBS`) and an
+empty user `deps.edn`, which is the environment of a sandboxed build. It
+prepares the classpath of the project and of each alias, prepares the git
+dependencies that need it (`clojure -X:deps prep`), and runs the build and
+test commands. The lockfile records every download:
+
+- **Maven repositories.** Files from Maven Central, Clojars and the
+  repositories `deps.edn` adds with `:mvn/repos` are supported. Each file
+  is locked by the URL of its repository and its SHA-256.
+- **Mirrors.** `lock --mirror ID=URL` downloads the files of the repository
+  `ID` from a mirror during the lock run. The lockfile records the
+  repository URL, and the mirror as a fallback. The mirrors of
+  `~/.m2/settings.xml` are recorded the same way.
+- **Version ranges and SNAPSHOT versions.** Maven Resolver picks these from
+  repository metadata, whose content changes at its URL, so the lockfile
+  holds the metadata the lock run read. The build resolves to the versions
+  the lock run picked. A SNAPSHOT file is locked at its timestamped URL.
+- **Git dependencies.** Dependencies given by `:git/sha` alone or with
+  `:git/tag` are supported, including those that need preparing. The
+  Clojure CLI expands a short commit and checks a tag in a bare clone, so
+  the lockfile also holds the commit objects and tags the CLI reads. The
+  Nix build rebuilds the bare clone from them, and each rebuilt commit has
+  exactly the locked hash.
+- **Dependencies chosen by architecture.** The lock run resolves the
+  project once more for each Linux architecture the flake builds for, with
+  the matching `os.arch`.
+- **Local dependencies.** A `:local/root` dependency comes from the source.
+  A local dependency outside the project needs a source root that holds
+  both: `lock --source DIR` names it, and the Nix build takes that
+  directory as `src`, with `projectDir` naming the project.
+- **Downloads outside the Clojure CLI** are refused. A build script that
+  downloads a file itself fails in the sandbox, because the lock records
+  only what the Clojure CLI and Maven Resolver fetch.
+- **Git files changed by attributes** are refused. A repository whose
+  checkout differs from its commit, such as one with Git LFS files, cannot
+  rebuild the commit, and the lock run names it.
+
+Maven Resolver reads its proxy only from `settings.xml`. The lock run uses
+`~/.m2/settings.xml` with its proxies, mirrors and credentials, and
+otherwise writes one with the proxy of `https_proxy`. A Maven repository
+that needs credentials in the Nix build takes them through
+`fetchers.fetchurl`. A git dependency over ssh can be fetched at evaluation
+with the user's ssh agent, and the locked hash still applies:
 
 ```nix
 buildClojureCliProject {
+  inherit pkgs;
   src = ./.;
-  fetchgit = args: builtins.fetchGit {
+  fetchers.fetchgit = args: builtins.fetchGit {
     inherit (args) url rev;
     narHash = args.hash;
   };
 }
 ```
 
-## The Clojure CLI on the locked downloads
+## Real-world projects
 
-```zsh
-nix run github:nix-purifiers/clojure-cli-purifier -- clojure -M:test
-```
+| Project | Commit | Lock | Relock after a change | What CI builds |
+| --- | --- | --- | --- | --- |
+| [honeysql](https://github.com/seancorfield/honeysql) | `1cc6bbe` | 67 s, 312 files, 3 git checkouts | 78 s | its 179 tests, from a lockfile kept outside its source |
 
-`clojure-cli-purifier clojure` builds the local Maven repository and the
-gitlibs directory of the lockfile into the store, keeps them alive with a
-GC root under `.cpcache/clojure-cli-purifier`, and runs the Clojure CLI on
-them. Your user `deps.edn` stays in effect, and `lock --user-aliases`
-also locks its aliases, so that tools you keep there, such as an nREPL
-alias, run offline too. When the lockfile is out of date, the command
-warns and runs the Clojure CLI the usual way until `lock` renews it.
+The lock times were measured on one machine through Google's Maven Central
+mirror, and include the test run. honeysql's `build.clj` runs under
+babashka, so its lock names `--test '-X:test'` and no build. Its lockfile
+lies in `tests/real-world/honeysql`. The `real-world-honeysql` check builds
+it, and the `conformance-relock` CI job relocks it.
 
-## Publishing
-
-```zsh
-CLOJARS_USERNAME=… CLOJARS_PASSWORD=… \
-  nix run github:nix-purifiers/clojure-cli-purifier -- publish
-```
-
-`publish` builds the package with Nix and deploys the jar named
-`<artifactId>-<version>.jar` and the POM the build wrote, with
-[deps-deploy](https://github.com/slipset/deps-deploy). Nothing is compiled
-outside the sandbox. `--repository ID=URL` deploys to another Maven
-repository, with the credentials of the server of the same id in
-`~/.m2/settings.xml`, and `--dry-run` prints what it would deploy.
-
-## Limits
-
-- **Downloads outside the Clojure CLI.** A build script that downloads a
-  file itself, rather than through a dependency, fails in the sandbox,
-  because the lock records only what the Clojure CLI and Maven Resolver
-  fetch.
-- **Git files changed by attributes.** The Nix build rebuilds each commit
-  from the files of its checkout. A repository whose checkout differs from
-  its commit, such as one with Git LFS files, cannot rebuild the commit,
-  and the lock run refuses it with a message that names it.
-
-## Credit
+## Credits
 
 The purifier idea was inspired by nixcloud's
 [cargo (libnix)](https://github.com/nixcloud/cargo). The lockfile and the
 interactive mode follow
 [sbt-purifier](https://github.com/nix-purifiers/sbt-purifier).
 
-## License
-
-MIT
+clojure-cli-purifier is MIT licensed; see [LICENSE](LICENSE).

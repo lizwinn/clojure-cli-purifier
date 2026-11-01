@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: MIT
 #
-# What `clojure-cli-purifier clojure` builds for an interactive Clojure
-# CLI: one store path that holds the local Maven repository of the lock
-# (`repository`) and its gitlibs directory (`gitlibs`). The command keeps
-# a GC root on it, so the locked downloads stay in the store while the
-# project uses them.
+# What `clojure-cli-purifier prefetch` builds for the Clojure CLI of the
+# everyday loop: one store path that holds the local Maven repository of
+# the lock (`repository`) and its gitlibs directory (`gitlibs`). The
+# command keeps a GC root on it, so the locked downloads stay in the store
+# while the project uses them.
 #
-# `nixpkgs` is the nixpkgs source the clojure-cli-purifier command was
-# built with, and `purifierRef` the locked flake reference of the shared
-# purifier library it was built with, both as strings. So the interactive
-# mode fetches the same way the builder does, and the two share every store
+# `src` is the source root, `projectDir` the project in it, and `lockFile`
+# the lockfile, all as strings. `nixpkgs` is the nixpkgs source the
+# clojure-cli-purifier command was built with, and `purifierRef` the locked
+# flake reference of the shared purifier library it was built with. So the
+# prefetch fetches the way the builder does, and the two share every store
 # path.
 {
+  src,
+  projectDir,
   lockFile,
   nixpkgs,
   purifierRef,
@@ -19,8 +22,15 @@
 let
   pkgs = import nixpkgs { };
   inherit ((builtins.getFlake purifierRef).lib) purifier;
-  repository = pkgs.callPackage ./repository.nix { inherit lockFile purifier; };
-  gitlibs = pkgs.callPackage ./gitlibs.nix { inherit lockFile purifier; };
+  lock = purifier.checkLock (
+    import ./read-lock.nix {
+      src = /. + src;
+      lockFile = /. + lockFile;
+      inherit projectDir;
+    }
+  );
+  repository = pkgs.callPackage ./repository.nix { inherit purifier lock; };
+  gitlibs = pkgs.callPackage ./gitlibs.nix { inherit purifier lock; };
 in
 pkgs.runCommand "clojure-cli-purifier-env"
   {

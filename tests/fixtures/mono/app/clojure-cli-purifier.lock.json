@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "clojureVersion": "1.12.6.1673",
   "javaVersion": "21.0.12.1",
   "projectDir": "app",
@@ -1198,5 +1198,6 @@
   ],
   "metadata": [],
   "git": [],
-  "gitRepos": []
+  "gitRepos": [],
+  "contentHash": "72f7a6bb41a2ac66a379f222cd7b82296f2a78733b18dc1424f4c36a2657a2f9"
 }
