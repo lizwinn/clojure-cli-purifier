@@ -1,0 +1,4 @@
+{:paths ["src"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.3"}
+        mono/lib {:local/root "../lib"}}
+ :aliases {:run {:main-opts ["-m" "app.core"]}}}
