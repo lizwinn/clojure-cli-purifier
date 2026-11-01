@@ -1,45 +1,116 @@
 # clojure-cli-purifier
 
-A command and a Nix library that build Clojure projects of the
-[Clojure CLI](https://clojure.org/reference/clojure_cli) (`deps.edn`
-projects) in the Nix sandbox. The command records the files the Clojure CLI
-downloads in a lockfile, and Nix builds the project from that lockfile,
-offline. The project commits the lockfile, and no generated Nix files.
+clojure-cli-purifier keeps the Clojure CLI's development workflow on locked,
+Nix-resolved dependencies. Use the normal build and test commands in your
+working tree; building the project itself in the Nix sandbox is an
+optional next step.
+
+It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
 clojure-cli-purifier is one of the
 [nix-purifiers](https://nix-purifiers.github.io), and it meets their
 [contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
+## Installation
+
+Install the integration into your Nix profile once:
+
+```sh
+nix profile install 'github:nix-purifiers/clojure-cli-purifier'
+```
+
+The CLI installs the project-local native-tool wrapper during `prefetch`.
+Activate its PATH as shown below. If its lockfile is later removed, the
+wrapper warns on standard error and delegates to the ordinary tool.
+
+`nix shell` makes an integration available temporarily instead of installing
+it. Keep using the activation steps below where a project environment or
+prefetched cache is required.
+
 ## Quickstart
 
-Lock the project from its root, naming the build and test commands, and
-commit `clojure-cli-purifier.lock.json`:
+Install Nix, then run the following from your existing project's root.
+The setup prepares the locked dependencies and the integration that
+the Clojure CLI's normal commands use:
 
 ```zsh
 nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
+nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
+export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+clojure -T:build uber
+clojure -M:test
 ```
 
-Then build the project from its directory. The command adds no Nix file to
-the project:
+Commit the lockfiles that the lock command writes, including the build
+tool's own lockfile when it has one. Keep using the project's usual build,
+test and editor commands with this setup. Nix provides the locked
+dependencies; the development commands above run outside the Nix sandbox.
+No project Nix files are needed for this workflow.
+
+Use the build and test aliases that your project defines in place of
+`:build` and `:test`.
+
+Sandboxed builds of the whole project are an optional
+[next step](#building-the-project-with-nix).
+
+## Development loop
+
+The Clojure CLI has no lockfile and no plugin interface for locking. So
+clojure-cli-purifier is a standalone command, and its lockfile
+`clojure-cli-purifier.lock.json` is the only lockfile of the project.
+
+`clojure-cli-purifier prefetch` builds the downloads of the lockfile into
+the Nix store, and links `.clojure-cli-purifier/bin/clojure` beside the
+lockfile. With that directory first on `PATH`, the project's own `clojure`
+commands run on the locked downloads:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; }).packages.hello'
+clojure-cli-purifier prefetch
+export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
+clojure -M:test
+clojure -T:build uber
 ```
 
-This uses the purifier's pinned nixpkgs, matching the lock command above.
-To build with ambient `<nixpkgs>` from your Nix search path instead,
-replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
-Both forms need no Nix files in your project. The build tool and language
-versions must match the lockfile; with ambient nixpkgs, lock with the
-purifier from that package set or pass a compatible toolchain to the builder.
+With [direnv](https://direnv.net), an `.envrc` with
+`PATH_add .clojure-cli-purifier/bin` sets the same `PATH`. We recommend
+adding `.clojure-cli-purifier/` to `.gitignore`.
+
+To add or upgrade a dependency, edit `deps.edn`, then run
+`clojure-cli-purifier lock` and `clojure-cli-purifier prefetch`. A relock
+keeps the build and test commands of the lockfile. `--build`, `--test`,
+`--alias :name` and `--user-aliases` each replace their part of the
+lockfile.
+
+A relock also keeps the versions the lockfile chose for version ranges and
+SNAPSHOTs, from the repository metadata it recorded.
+`clojure-cli-purifier update` resolves them anew, for every library or for
+the named ones:
+
+```zsh
+clojure-cli-purifier update org.clojure/core.memoize
+```
+
+A version that deps.edn names exactly changes when deps.edn does, and a
+git dependency changes when its `:git/sha` does.
+
+The user `deps.edn` stays in effect. `lock --user-aliases` also locks its
+aliases, so that tools kept there, such as an nREPL alias, run offline too.
+
+`clojure-cli-purifier publish` builds the `release` with Nix and deploys its
+jar and POM with [deps-deploy](https://github.com/slipset/deps-deploy).
+Nothing is compiled outside the sandbox. The default repository is
+Clojars, with `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`.
+`--repository ID=URL` deploys to another Maven repository, with the
+credentials of the server of the same id in `~/.m2/settings.xml`.
+`--dry-run` prints what it would deploy.
+
+## Building the project with Nix
+
+Once the native development workflow is working, you can also build and
+test the whole project in the Nix sandbox. For this step, keep a flake or
+another Nix build definition in the project's repository, or maintain an
+external packaging repository that points at its sources and lockfiles.
+The builder consumes the same lockfiles as the development workflow.
 
 `packages.hello` is the package of the project, which the example names
 `hello`. The result links to `./result`.
@@ -126,56 +197,29 @@ Every command takes `--lockfile PATH` or the environment variable
 `CLOJURE_CLI_PURIFIER_LOCKFILE`, which a dev shell can set to the same
 path. The flag takes precedence over the variable.
 
-## Development loop
+### One-off builds without a project Nix file
 
-The Clojure CLI has no lockfile and no plugin interface for locking. So
-clojure-cli-purifier is a standalone command, and its lockfile
-`clojure-cli-purifier.lock.json` is the only lockfile of the project.
-
-`clojure-cli-purifier prefetch` builds the downloads of the lockfile into
-the Nix store, and links `.clojure-cli-purifier/bin/clojure` beside the
-lockfile. With that directory first on `PATH`, the project's own `clojure`
-commands run on the locked downloads:
+For an ad hoc build, the builder can also be evaluated directly from the
+project root. Replace the example package name with one from your project:
 
 ```zsh
-clojure-cli-purifier prefetch
-export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
-clojure -M:test
-clojure -T:build uber
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; }).packages.hello'
 ```
 
-With [direnv](https://direnv.net), an `.envrc` with
-`PATH_add .clojure-cli-purifier/bin` sets the same `PATH`. We recommend
-adding `.clojure-cli-purifier/` to `.gitignore`.
-
-To add or upgrade a dependency, edit `deps.edn`, then run
-`clojure-cli-purifier lock` and `clojure-cli-purifier prefetch`. A relock
-keeps the build and test commands of the lockfile. `--build`, `--test`,
-`--alias :name` and `--user-aliases` each replace their part of the
-lockfile.
-
-A relock also keeps the versions the lockfile chose for version ranges and
-SNAPSHOTs, from the repository metadata it recorded.
-`clojure-cli-purifier update` resolves them anew, for every library or for
-the named ones:
-
-```zsh
-clojure-cli-purifier update org.clojure/core.memoize
-```
-
-A version that deps.edn names exactly changes when deps.edn does, and a
-git dependency changes when its `:git/sha` does.
-
-The user `deps.edn` stays in effect. `lock --user-aliases` also locks its
-aliases, so that tools kept there, such as an nREPL alias, run offline too.
-
-`clojure-cli-purifier publish` builds the `release` with Nix and deploys its
-jar and POM with [deps-deploy](https://github.com/slipset/deps-deploy).
-Nothing is compiled outside the sandbox. The default repository is
-Clojars, with `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`.
-`--repository ID=URL` deploys to another Maven repository, with the
-credentials of the server of the same id in `~/.m2/settings.xml`.
-`--dry-run` prints what it would deploy.
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
 
 ## Working offline
 
@@ -277,6 +321,11 @@ clojure-cli-purifier.buildClojureCliProject {
 ```
 
 ## Examples
+
+For day-to-day work on these projects, use the native-tool setup and
+commands in [Quickstart](#quickstart) and [Development loop](#development-loop).
+The Nix expressions below show optional sandboxed packaging of those
+projects.
 
 ### honeysql
 

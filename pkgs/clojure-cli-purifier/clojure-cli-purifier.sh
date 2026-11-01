@@ -780,6 +780,10 @@ runClojure() {
   state=$(cd "$(dirname "$0")/.." && pwd)
   [ -f "$state/lockfile" ] || die "$state holds no prefetch; run clojure-cli-purifier prefetch"
   lockFile=$(cat "$state/lockfile")
+  if [ ! -e "$lockFile" ]; then
+    echo "clojure-cli-purifier: warning: no clojure-cli-purifier.lock.json found; running clojure impurely. Run \`clojure-cli-purifier lock\` to use Nix-resolved dependencies." >&2
+    exec clojure "$@"
+  fi
   root=$(projectRoot)
   problem=$(lockProblem "$root" "$lockFile")
   [ -z "$problem" ] || die "$problem"
