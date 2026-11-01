@@ -152,4 +152,12 @@ nix log "$built" | grep -qx 'value 42 two'
   "$cli" clojure -M:run | grep -qx 'value 42 two'
 )
 
+echo "== a lock through a mirror records the repository URL and the mirror"
+cp -r "$root/tests/fixtures/mono" "$work/mono"
+(cd "$work/mono/app" && "$cli" lock --force --mirror central=https://maven-central.storage-download.googleapis.com/maven2/)
+mirrored="$work/mono/app/clojure-cli-purifier.lock.json"
+test "$("$jq" '[.artifacts[] | select(.url | startswith("https://repo1.maven.org/maven2/"))] | length' "$mirrored")" -gt 0
+test "$("$jq" '[.artifacts[] | select((.url | startswith("https://repo1.maven.org/maven2/")) and (.mirrors | length) != 1)] | length' "$mirrored")" = 0
+test "$("$jq" '[.artifacts[] | select(.url | startswith("https://maven-central.storage-download"))] | length' "$mirrored")" = 0
+
 echo "== all interactive checks passed"

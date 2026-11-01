@@ -120,7 +120,9 @@ let
 
   project = lock.project;
 
-  clojureCommands = lib.concatMapStringsSep "\n" (args: "purifierClojure ${lib.escapeShellArgs args}");
+  clojureCommands = lib.concatMapStringsSep "\n" (
+    args: "purifierClojure ${lib.escapeShellArgs args}"
+  );
 
   javaDirectory = "share/java";
   outputFile = package: output: "${package}/${javaDirectory}/${baseNameOf output.path}";

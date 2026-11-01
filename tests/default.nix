@@ -76,7 +76,8 @@ in
     assert lock.storeName "a b@c$d.jar" == "a_b_c_d.jar";
     assert lock.storeName "..hidden" == "hidden";
     assert lock.storeName "..." == "file";
-    assert builtins.stringLength (lock.storeName (pkgs.lib.concatStrings (pkgs.lib.replicate 300 "x"))) == 200;
+    assert
+      builtins.stringLength (lock.storeName (pkgs.lib.concatStrings (pkgs.lib.replicate 300 "x"))) == 200;
     assert
       lock.checkoutName {
         path = "libs/io.github.clojure/tools.build/deedd623574e3712687a657691c6b79f5026b3a1";
@@ -163,9 +164,10 @@ in
     assert refuses (
       builtins.toFile "clojure-cli-purifier.lock.json" (
         builtins.toJSON (
-          removeAttrs (builtins.fromJSON (builtins.readFile ./fixtures/hello/clojure-cli-purifier.lock.json)) [
-            "artifacts"
-          ]
+          removeAttrs (builtins.fromJSON (builtins.readFile ./fixtures/hello/clojure-cli-purifier.lock.json))
+            [
+              "artifacts"
+            ]
         )
       )
     );

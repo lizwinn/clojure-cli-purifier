@@ -426,6 +426,16 @@ cmdLock() {
   local -a untracked=() unknown=()
   : >"$artifacts"
   : >"$metadata"
+  # The resolver names the version list of a repository after its id. The
+  # build resolves without the mirrors of the lock run, so a version list a
+  # mirror of one repository served takes the id of that repository.
+  local -a renames=(-e 's/^/&/')
+  local mirrorId
+  for mirrorId in "${!mirrorOf[@]}"; do
+    if [ -n "${repositoryUrl[${mirrorOf[$mirrorId]}]:-}" ]; then
+      renames+=(-e "s/maven-metadata-$mirrorId\\.xml/maven-metadata-${mirrorOf[$mirrorId]}.xml/g")
+    fi
+  done
   local dir name2 remote
   while IFS= read -r rel; do
     dir=$(dirname "$rel")
@@ -435,14 +445,16 @@ cmdLock() {
       continue
       ;;
     maven-metadata*.xml)
-      jq -cn --arg path "$rel" --rawfile contents "$m2/$rel" '{ path: $path, contents: $contents }' >>"$metadata"
+      jq -cn --arg path "$dir/$(sed "${renames[@]}" <<<"$name2")" --rawfile contents "$m2/$rel" \
+        '{ path: $path, contents: $contents }' >>"$metadata"
       continue
       ;;
     resolver-status.properties)
       # The resolver checks a version list again a day after the time it
       # records, so the time becomes the year 2100. The comment lines hold
       # the date of the lock run, which a relock would change.
-      jq -cn --arg path "$rel" --arg contents "$(sed -E '/^#/d; s/=[0-9]{13}$/=4102444800000/' "$m2/$rel")"$'\n' \
+      jq -cn --arg path "$rel" \
+        --arg contents "$(sed -E "${renames[@]}" -e '/^#/d' -e 's/=[0-9]{13}$/=4102444800000/' "$m2/$rel")"$'\n' \
         '{ path: $path, contents: $contents }' >>"$metadata"
       continue
       ;;
@@ -469,22 +481,28 @@ cmdLock() {
       untracked+=("$rel")
       continue
     fi
-    url=${repositoryUrl[$id]:-}
-    if [ -z "$url" ]; then
+    if [ -z "${repositoryUrl[$id]:-}" ]; then
       unknown+=("$rel (repository $id)")
       continue
     fi
-    # A file a mirror of one repository served is locked at the URL of that
-    # repository, with the mirror as its fallback.
-    local mirror=""
+    # A file is locked at the URL of its repository. When a mirror of that
+    # one repository served it, the repository is the one the mirror
+    # serves. Every mirror of the repository is a fallback, whichever of
+    # them Maven Resolver recorded.
+    local canonical=$id
     of=${mirrorOf[$id]:-}
-    if [ -n "$of" ] && [ -n "${repositoryUrl[$of]:-}" ]; then
-      mirror="$url$dir/$remote"
-      url=${repositoryUrl[$of]}
-    fi
-    jq -cn --arg path "$rel" --arg url "$url$dir/$remote" --arg mirror "$mirror" \
+    if [ -n "$of" ] && [ -n "${repositoryUrl[$of]:-}" ]; then canonical=$of; fi
+    url="${repositoryUrl[$canonical]}$dir/$remote"
+    local -a fallbacks=()
+    for mirrorId in "${!mirrorOf[@]}"; do
+      if [ "${mirrorOf[$mirrorId]}" = "$canonical" ]; then
+        fallbacks+=("${repositoryUrl[$mirrorId]}$dir/$remote")
+      fi
+    done
+    jq -cn --arg path "$rel" --arg url "$url" \
+      --argjson mirrors "$(printf '%s\n' "${fallbacks[@]}" | grep -v '^$' | LC_ALL=C sort | jq -R . | jq -sc .)" \
       --arg hash "$(nix-hash --type sha256 --flat --sri "$m2/$rel")" \
-      '{ path: $path, url: $url, mirrors: (if $mirror == "" then [] else [$mirror] end), hash: $hash }' >>"$artifacts"
+      '{ path: $path, url: $url, mirrors: $mirrors, hash: $hash }' >>"$artifacts"
   done < <(cd "$m2" && find . -type f -printf '%P\n' | LC_ALL=C sort)
 
   if [ ${#untracked[@]} -gt 0 ]; then
