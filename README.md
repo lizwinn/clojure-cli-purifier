@@ -10,7 +10,9 @@ optional next step.
 Install the integration into your Nix profile once:
 
 ```sh
-nix profile install 'github:nix-purifiers/clojure-cli-purifier#clojure' 'github:nix-purifiers/clojure-cli-purifier#cli'
+nix profile install \
+  'github:nix-purifiers/clojure-cli-purifier#clojure' \
+  'github:nix-purifiers/clojure-cli-purifier#cli'
 ```
 
 This installs the native `clojure` wrapper and the purifier CLI. The wrapper
@@ -29,7 +31,8 @@ The setup prepares the locked dependencies and the integration that
 the Clojure CLI's normal commands use:
 
 ```zsh
-nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build uber' --test '-M:test'
+nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+  --build '-T:build uber' --test '-M:test'
 nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
 export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
 clojure -T:build uber
@@ -122,14 +125,17 @@ The flake can lie in the repository of the project or in another one:
   inputs.clojure-cli-purifier.url = "github:nix-purifiers/clojure-cli-purifier";
   inputs.nixpkgs.follows = "clojure-cli-purifier/nixpkgs";
 
-  outputs = { nixpkgs, clojure-cli-purifier, ... }:
+  outputs =
+    { nixpkgs, clojure-cli-purifier, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
         overlays = [ clojure-cli-purifier.overlays.default ];
       };
-      project = pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; };
+      project = pkgs.clojure-cli-purifier.buildClojureCliProject {
+        src = ./.;
+      };
     in
     {
       packages.${system}.default = project.packages.hello;
@@ -198,15 +204,16 @@ For an ad hoc build, the builder can also be evaluated directly from the
 project root. Replace the example package name with one from your project:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.clojure-cli-purifier.buildClojureCliProject { src = ./.; }).packages.hello'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.clojure-cli-purifier.buildClojureCliProject {
+  src = ./.;
+}).packages.hello'
 ```
 
 This uses the purifier's pinned nixpkgs, matching the lock command above.
@@ -336,13 +343,15 @@ Clone the library, and lock it with the test command:
 ```zsh
 git clone https://github.com/seancorfield/honeysql
 cd honeysql
-nix run github:nix-purifiers/clojure-cli-purifier -- lock --test '-X:test' --lockfile ../honeysql.lock.json
+nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+  --test '-X:test' --lockfile ../honeysql.lock.json
 ```
 
 Prefetch the downloads, and run the tests with no network:
 
 ```zsh
-export CLOJURE_CLI_PURIFIER_LOCKFILE="$PWD/../honeysql.lock.json"
+export \
+  CLOJURE_CLI_PURIFIER_LOCKFILE="$PWD/../honeysql.lock.json"
 nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
 export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
 clojure -X:test
@@ -351,18 +360,17 @@ clojure -X:test
 Then build and test it with Nix, from the directory of the clone:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.clojure-cli-purifier.buildClojureCliProject {
-    src = ./.;
-    lockFile = ../honeysql.lock.json;
-  }).tests'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/clojure-cli-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.clojure-cli-purifier.buildClojureCliProject {
+  src = ./.;
+  lockFile = ../honeysql.lock.json;
+}).tests'
 ```
 
 The build runs the tests of honeysql in the sandbox. After a change to the
@@ -374,7 +382,8 @@ A project whose `build.clj` has the usual `jar` function, run through
 `clojure -T:build`, locks without extra options:
 
 ```zsh
-nix run github:nix-purifiers/clojure-cli-purifier -- lock --build '-T:build jar' --test '-M:test'
+nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+  --build '-T:build jar' --test '-M:test'
 ```
 
 Build it from its directory with the expression of the Quickstart.
