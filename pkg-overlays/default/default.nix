@@ -26,7 +26,10 @@
           self:
           import ../../pkgs { inherit (self) callPackage; }
           // {
-            buildClojureCliProject = self.callPackage ../../nix/lib/build-clojure-cli-project.nix { };
+            # Sandboxed builds use the native CLI, not the interactive wrapper.
+            buildClojureCliProject = self.callPackage ../../nix/lib/build-clojure-cli-project.nix {
+              clojure = final.clojure;
+            };
           }
         );
   };

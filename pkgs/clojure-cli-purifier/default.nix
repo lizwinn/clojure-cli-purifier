@@ -16,7 +16,7 @@
   zstd,
   python3,
   writeText,
-  clojure,
+  pkgs,
   # The JVM of the Clojure CLI. The lock records its version, and the Nix
   # build runs on a JDK of the same major version.
   jdk_headless,
@@ -38,7 +38,7 @@
 }:
 let
   jdk = jdk_headless;
-  clojure' = clojure.override { inherit jdk; };
+  clojure' = pkgs.clojure.override { inherit jdk; };
 
   # The classpath of the deploy tool, resolved offline from its lockfile,
   # which `clojure-cli-purifier lock` made in deploy/. The classpath names

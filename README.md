@@ -16,12 +16,13 @@ clojure-cli-purifier is one of the
 Install the integration into your Nix profile once:
 
 ```sh
-nix profile install 'github:nix-purifiers/clojure-cli-purifier'
+nix profile install 'github:nix-purifiers/clojure-cli-purifier#clojure' 'github:nix-purifiers/clojure-cli-purifier#cli'
 ```
 
-The CLI installs the project-local native-tool wrapper during `prefetch`.
-Activate its PATH as shown below. If its lockfile is later removed, the
-wrapper warns on standard error and delegates to the ordinary tool.
+This installs the native `clojure` wrapper and the purifier CLI. The wrapper
+uses the nearest project's lock and prepares its cache when needed. Without
+a purifier lock, it warns on standard error and runs ordinary, impure Clojure.
+`prefetch` also supplies a project-local wrapper for shells and editors.
 
 `nix shell` makes an integration available temporarily instead of installing
 it. Keep using the activation steps below where a project environment or

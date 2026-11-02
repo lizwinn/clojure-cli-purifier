@@ -20,6 +20,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cli=$(nix build --no-link --print-out-paths "$root#cli")/bin/clojure-cli-purifier
+wrapper=$(nix build --no-link --print-out-paths "$root#clojure")/bin/clojure
 java=$(nix build --no-link --print-out-paths "$root#cli.jdk")/bin/java
 jq=$(nix build --no-link --print-out-paths --inputs-from "$root" 'nixpkgs#jq^bin')/bin/jq
 work=$(mktemp -d "${TMPDIR:-/tmp}/clojure-cli-purifier-interactive.XXXXXX")
@@ -35,8 +36,16 @@ export CLJ_CONFIG="$work/config"
 # it, as the fixtures were locked.
 mirror=central=https://maven-central.storage-download.googleapis.com/maven2/
 
+echo "== the installed wrapper works outside a configured project"
+(cd "$work" && "$wrapper" -Sdescribe >"$work/unlocked.out" 2>"$work/unlocked.log")
+grep -q 'warning:.*impurely' "$work/unlocked.log"
+grep -q ':version' "$work/unlocked.out"
+
 echo "== lock leaves an up-to-date lockfile alone"
 "$cli" lock | grep -q 'is up to date'
+
+echo "== the installed wrapper prepares and uses a locked project"
+"$wrapper" -M:test | grep -q '0 failures, 0 errors'
 
 echo "== after prefetch, clojure runs offline from the locked downloads"
 "$cli" prefetch
