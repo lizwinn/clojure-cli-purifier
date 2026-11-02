@@ -390,8 +390,6 @@ Build it from its directory with the expression of the Quickstart.
 ## Credits
 
 The purifier idea was inspired by nixcloud's
-[cargo (libnix)](https://github.com/nixcloud/cargo). The lockfile and the
-interactive mode follow
-[sbt-purifier](https://github.com/nix-purifiers/sbt-purifier).
+[cargo (libnix)](https://github.com/nixcloud/cargo).
 
-clojure-cli-purifier is MIT licensed; see [LICENSE](LICENSE).
+Released under the MIT license; see [LICENSE](LICENSE).
