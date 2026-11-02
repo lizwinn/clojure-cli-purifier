@@ -331,18 +331,24 @@ lockfile instead, as the Quickstart does.
 Clone the library, and lock it with the test command:
 
 ```zsh
+nix shell \
+  'github:nix-purifiers/clojure-cli-purifier#clojure' \
+  'github:nix-purifiers/clojure-cli-purifier#cli'
 git clone https://github.com/seancorfield/honeysql
 cd honeysql
-nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+clojure-cli-purifier lock \
   --test '-X:test' --lockfile ../honeysql.lock.json
 ```
 
 Prefetch the downloads, and run the tests with no network:
 
 ```zsh
+nix shell \
+  'github:nix-purifiers/clojure-cli-purifier#clojure' \
+  'github:nix-purifiers/clojure-cli-purifier#cli'
 export \
   CLOJURE_CLI_PURIFIER_LOCKFILE="$PWD/../honeysql.lock.json"
-nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
+clojure-cli-purifier prefetch
 export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
 clojure -X:test
 ```
@@ -372,7 +378,10 @@ A project whose `build.clj` has the usual `jar` function, run through
 `clojure -T:build`, locks without extra options:
 
 ```zsh
-nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+nix shell \
+  'github:nix-purifiers/clojure-cli-purifier#clojure' \
+  'github:nix-purifiers/clojure-cli-purifier#cli'
+clojure-cli-purifier lock \
   --build '-T:build jar' --test '-M:test'
 ```
 
