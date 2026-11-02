@@ -61,7 +61,7 @@ test -L .clojure-cli-purifier/env
 )
 
 echo "== publish deploys what Nix built"
-built=$("$cli" publish --dry-run | sed -n 's/^jar: //p')
+built=$("$cli" publish --dry-run | sed -n 's/^jar: //p' | grep -E '/example/hello/[^/]+/hello-[^/]+\.jar$')
 test -f "$built"
 mkdir -p "$work/repository"
 # The deploy tool runs from the package, so publishing to a file
@@ -76,6 +76,7 @@ mkdir -p "$work/repository"
 published=$(find "$work/repository/example/hello" -name 'hello-1.0.0-nix-*.jar')
 cmp "$built" "$published"
 test -f "${published%.jar}.pom"
+test -n "$(find "$work/repository/local/greet" -name '*-nix-*.jar')"
 
 echo "== the aliases of the user deps.edn run offline once locked"
 mkdir -p "$CLJ_CONFIG"
