@@ -5,35 +5,17 @@ Nix-resolved dependencies. Use the normal build and test commands in your
 working tree; building the project itself in the Nix sandbox is an
 optional next step.
 
-## Installation
-
-Install the integration into your Nix profile once:
-
-```sh
-nix profile install \
-  'github:nix-purifiers/clojure-cli-purifier#clojure' \
-  'github:nix-purifiers/clojure-cli-purifier#cli'
-```
-
-This installs the native `clojure` wrapper and the purifier CLI. The wrapper
-uses the nearest project's lock and prepares its cache when needed. Without
-a purifier lock, it warns on standard error and runs ordinary, impure Clojure.
-`prefetch` also supplies a project-local wrapper for shells and editors.
-
-`nix shell` makes an integration available temporarily instead of installing
-it. Keep using the activation steps below where a project environment or
-prefetched cache is required.
-
 ## Quickstart
 
-Install Nix, then run the following from your existing project's root.
-The setup prepares the locked dependencies and the integration that
-the Clojure CLI's normal commands use:
+From the project root:
 
 ```zsh
-nix run github:nix-purifiers/clojure-cli-purifier -- lock \
+nix shell \
+  'github:nix-purifiers/clojure-cli-purifier#clojure' \
+  'github:nix-purifiers/clojure-cli-purifier#cli'
+clojure-cli-purifier lock \
   --build '-T:build uber' --test '-M:test'
-nix run github:nix-purifiers/clojure-cli-purifier -- prefetch
+clojure-cli-purifier prefetch
 export PATH="$PWD/.clojure-cli-purifier/bin:$PATH"
 clojure -T:build uber
 clojure -M:test
@@ -50,6 +32,14 @@ Use the build and test aliases that your project defines in place of
 
 Sandboxed builds of the whole project are an optional
 [next step](#building-the-project-with-nix).
+
+The shell provides the native `clojure` wrapper and the purifier CLI. The wrapper
+uses the nearest project's lock and prepares its cache when needed. Without
+a purifier lock, it warns on standard error and runs ordinary, impure Clojure.
+`prefetch` also supplies a project-local wrapper for shells and editors.
+
+For persistent use, add these packages through your usual Nix configuration.
+
 
 ## Development loop
 
