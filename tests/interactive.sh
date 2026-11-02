@@ -73,8 +73,9 @@ mkdir -p "$work/repository"
   mkdir -p "$work/publish-home"
   "$cli" publish --repository "local=file://$work/repository"
 )
-cmp "$built" "$work/repository/example/hello/1.0.0/hello-1.0.0.jar"
-test -f "$work/repository/example/hello/1.0.0/hello-1.0.0.pom"
+published=$(find "$work/repository/example/hello" -name 'hello-1.0.0-nix-*.jar')
+cmp "$built" "$published"
+test -f "${published%.jar}.pom"
 
 echo "== the aliases of the user deps.edn run offline once locked"
 mkdir -p "$CLJ_CONFIG"

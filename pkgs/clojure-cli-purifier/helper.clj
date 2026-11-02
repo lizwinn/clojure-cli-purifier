@@ -26,6 +26,24 @@
   (doseq [alias (sort (distinct (mapcat (comp keys :aliases read-edn) files)))]
     (println alias)))
 
+(defn- mvn-requests [files]
+  (doseq [[group name version]
+          (sort (distinct
+                 (for [file files
+                       entry (tree-seq coll? seq (read-edn file))
+                       :when (map-entry? entry)
+                       :let [[library coordinate] entry]
+                       :when (and (symbol? library) (map? coordinate)
+                                  (string? (:mvn/version coordinate)))]
+                   [(or (namespace library) (name library))
+                    (name library) (:mvn/version coordinate)])))]
+    (println (str group "\t" name "\t" version))))
+
+(defn- merge-input-config [[file supplied]]
+  (let [configuration (if (seq supplied) (edn/read-string supplied) {})
+        overrides (read-edn file)]
+    (prn (update configuration :aliases merge (:aliases overrides)))))
+
 (defn- repos [files]
   (doseq [[id {:keys [url]}] (distinct (mapcat (comp :mvn/repos read-edn) files))
           :when url]
@@ -76,5 +94,7 @@
 (let [[command & args] *command-line-args*]
   (case command
     "aliases" (aliases args)
+    "mvn-requests" (mvn-requests args)
+    "merge-input-config" (merge-input-config args)
     "repos" (repos args)
     "snapshot-name" (apply snapshot-name args)))

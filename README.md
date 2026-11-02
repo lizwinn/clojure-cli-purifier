@@ -92,6 +92,33 @@ Clojars, with `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`.
 credentials of the server of the same id in `~/.m2/settings.xml`.
 `--dry-run` prints what it would deploy.
 
+## Dependencies from another purified project
+
+Pass a producer's flake package to `lock`:
+
+```zsh
+clojure-cli-purifier lock \
+  --input 'github:owner/library/<rev>#library'
+clojure-cli-purifier prefetch
+```
+
+The producer must export a Maven view through `projections.maven`. Its
+catalog selects the supplied modules automatically, including their Nix-derived
+versions. Keep ordinary dependency declarations in the project; no version
+rewrite table is needed. Repeat `--input` for additional producers.
+
+The lock records the producer's pinned Nix source, rather than listing its
+artifacts as downloads. Relocking retains that pin; `update` refreshes it.
+Conflicting providers of the same module are rejected.
+
+For a Nix build definition, the corresponding builder argument is
+`projectDependencies = [ producer.packages.${system}.library ];`. By default,
+the builder reads the inputs recorded in the lock.
+
+Projected repositories use immutable, Nix-derived versions. The purifier's
+publish command deploys those coordinates and supplied dependencies, with
+POM references rewritten so ordinary Maven consumers can resolve them.
+
 ## Building the project with Nix
 
 Once the native development workflow is working, you can also build and

@@ -157,12 +157,67 @@ lockIsCurrent() {
   [ -z "$(lockProblem "$1" "$2")" ]
 }
 
+# Preserve the caller's -Sdeps and execution mode while activating the
+# selected coordinates for CLI resolution. Independent bases use private
+# repository aliases prepared below.
+clojure() {
+  if [ -z "${PURIFIER_PROVIDED_CONFIG:-}" ]; then command clojure "$@"; return; fi
+  local supplied='' mode=0 configuration
+  local arguments=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+    -Sdeps)
+      [ $# -ge 2 ] || die "-Sdeps needs an EDN map"
+      supplied=$2; shift 2 ;;
+    -T?*)
+      if [[ $1 == -T:* ]]; then
+        arguments+=("$1:nix-purifier-project-inputs")
+      else
+        # -Ttool names an installed tool, rather than project aliases.
+        # Its independent basis reads the prepared private Maven aliases.
+        arguments+=("$1")
+      fi
+      shift
+      arguments+=("$@")
+      mode=1
+      break ;;
+    -M* | -X* | -T | -A*)
+      arguments+=("$1:nix-purifier-project-inputs")
+      shift
+      arguments+=("$@")
+      mode=1
+      break ;;
+    *) arguments+=("$1"); shift ;;
+    esac
+  done
+  if [ "$mode" = 0 ]; then arguments=(-A:nix-purifier-project-inputs "${arguments[@]}"); fi
+  configuration=$(helper merge-input-config "$PURIFIER_PROVIDED_CONFIG" "$supplied")
+  command clojure -Sdeps "$configuration" "${arguments[@]}"
+}
+
+stageInputAliases() {
+  local repository=$1 metadata=$2
+  shift 2
+  local definitions=()
+  mapfile -t definitions < <(find "$@" \( -name target -o -name .git -o -name _repos -o -name .cpcache -o -name .clojure-cli-purifier \) -prune \
+    -o -type f -name deps.edn -print)
+  helper mvn-requests "${definitions[@]}" > "$metadata/requests.tsv"
+  python3 "$PURIFIER_LIB/maven-aliases.py" "$PURIFIER_PROJECT_INPUTS_TOOLS" \
+    "$repository" "$metadata" "$metadata/requests.tsv"
+}
+
 cmdLock() {
   local force=0 userAliases="" source="" lockArg=""
-  local -a builds=() tests=() aliases=() mirrorSpecs=()
+  local -a builds=() tests=() aliases=() mirrorSpecs=() inputArgs=()
   while [ $# -gt 0 ]; do
     case $1 in
     --force) force=1 ;;
+    --input)
+      [ $# -ge 2 ] || die "lock: --input takes a flake package"
+      inputArgs+=(--input "$2")
+      force=1
+      shift
+      ;;
     --lockfile)
       [ $# -ge 2 ] || die "lock: --lockfile takes a path"
       lockArg=$2
@@ -297,6 +352,17 @@ cmdLock() {
   if [ $hasLock = 1 ] && [ "$updateAll" = 0 ]; then
     mkdir -p "$work/home/.m2/repository"
     seedMetadata "$lockFile" "$work/home/.m2/repository" "$work/home/.m2/settings.xml" "${updatePrefixes[@]}"
+  fi
+  local previousArgs=() refreshArgs=()
+  if [ "$hasLock" = 1 ]; then previousArgs=(--previous "$lockFile"); fi
+  if [ "$updateAll" = 1 ]; then refreshArgs=(--refresh); fi
+  python3 "$PURIFIER_PROJECT_INPUTS_TOOLS/project_inputs.py" pin "${previousArgs[@]}" \
+    "${inputArgs[@]}" "${refreshArgs[@]}" --output "$work/inputs.json"
+  if [ "$(jq length "$work/inputs.json")" -gt 0 ]; then
+    python3 "$PURIFIER_PROJECT_INPUTS_TOOLS/project_inputs.py" maven --inputs "$work/inputs.json" \
+      --destination "$work/home/.m2/repository" --metadata "$work/input-metadata" --roots "$work/inputs"
+    export PURIFIER_PROVIDED_CONFIG="$work/input-metadata/project-inputs.edn"
+    stageInputAliases "$work/home/.m2/repository" "$work/input-metadata" "$work/source" "$work/gitlibs"
   fi
   echo '{}' >"$work/config/deps.edn"
   export HOME="$work/home"
@@ -457,6 +523,10 @@ cmdLock() {
       '{ path: $path, url: $url, commits: $commits, shallow: $shallow, tags: $tags }' >>"$gitRepos"
   done < <(find "$GITLIBS/_repos" -name HEAD -not -path '*/worktrees/*' -printf '%h\n' 2>/dev/null | LC_ALL=C sort)
 
+  if [ -n "${PURIFIER_PROVIDED_CONFIG:-}" ]; then
+    stageInputAliases "$m2" "$work/input-metadata" "$work/source" "$GITLIBS"
+  fi
+
   # Git dependencies that need preparing, then the build and its tests.
   local stamp="$work/stamp"
   touch "$stamp"
@@ -541,7 +611,12 @@ cmdLock() {
     fi
   done
   local dir name2 remote
+  declare -A providedPaths=()
+  if [ -f "$work/input-metadata/supplied-paths.json" ]; then
+    while IFS= read -r rel; do providedPaths[$rel]=1; done < <(jq -r '.[]' "$work/input-metadata/supplied-paths.json")
+  fi
   while IFS= read -r rel; do
+    if [ -n "${providedPaths[$rel]:-}" ]; then continue; fi
     dir=$(dirname "$rel")
     name2=$(basename "$rel")
     case $name2 in
@@ -630,6 +705,7 @@ cmdLock() {
   mapfile -t files < <(definitionFiles "$sourceRoot" "$projectDir")
   jq -n \
     --argjson version "$PURIFIER_FORMAT" \
+    --slurpfile projectInputs "$work/inputs.json" \
     --arg clojureVersion "$(clojureVersion)" \
     --arg javaVersion "$(javaVersion)" \
     --arg projectDir "$projectDir" \
@@ -666,7 +742,7 @@ cmdLock() {
       metadata: $metadata,
       git: $git,
       gitRepos: $gitRepos
-    }' >"$lockFile.content"
+    } | if ($projectInputs[0] | length) > 0 then . + {projectInputs: $projectInputs[0]} else . end' >"$lockFile.content"
   jq --arg contentHash "$(contentHash "$lockFile.content")" '. + { contentHash: $contentHash }' \
     "$lockFile.content" >"$lockFile.tmp"
   rm "$lockFile.content"
@@ -681,7 +757,7 @@ cmdUpdate() {
   local -a lockArgs=(--force) libs=()
   while [ $# -gt 0 ]; do
     case $1 in
-    --lockfile | --mirror)
+    --lockfile | --mirror | --input)
       [ $# -ge 2 ] || die "update: $1 takes a value"
       lockArgs+=("$1" "$2")
       shift
@@ -761,6 +837,14 @@ cmdPrefetch() {
   find "$home/.m2/repository" -type l \( -name 'maven-metadata*.xml' -o -name resolver-status.properties \) \
     -exec cp --no-preserve=mode -L {} {}.tmp \; -exec mv {}.tmp {} \;
   cp -rL --no-preserve=mode "$env/gitlibs/." "$gitlibs"
+  if [ "$(jq '.projectInputs // [] | length' "$lockFile")" -gt 0 ]; then
+    jq '.projectInputs' "$lockFile" > "$state/inputs.json"
+    rm -rf "$state/input-metadata"
+    python3 "$PURIFIER_PROJECT_INPUTS_TOOLS/project_inputs.py" maven --inputs "$state/inputs.json" \
+      --destination "$home/.m2/repository" --metadata "$state/input-metadata" --roots "$state/inputs"
+    stageInputAliases "$home/.m2/repository" "$state/input-metadata" \
+      "$(sourceRootOf "$root" "$projectDir")" "$gitlibs"
+  fi
   echo "$lockFile" >"$state/lockfile"
   jq -r .contentHash "$lockFile" >"$state/prefetched"
   ln -sfn "$(readlink -f "$0")" "$state/bin/clojure"
@@ -798,6 +882,10 @@ runClojure() {
   export CLJ_JVM_OPTS="-Duser.home=$state/home ${CLJ_JVM_OPTS:-}"
   export JAVA_OPTS="-Duser.home=$state/home ${JAVA_OPTS:-}"
   export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
+
+  if [ "$(jq '.projectInputs // [] | length' "$lockFile")" -gt 0 ]; then
+    export PURIFIER_PROVIDED_CONFIG="$state/input-metadata/project-inputs.edn"
+  fi
 
   # The standard error of the Clojure CLI also goes to a log. When it fails
   # to resolve a download, the lockfile lacks that download.
@@ -839,37 +927,18 @@ cmdPublish() {
   [ -z "$problem" ] || die "$problem"
   [ "$(jq -r .pom "$lockFile")" != null ] || die "the build of the lock writes no POM, which publishing needs"
 
-  local name version jar pom release
-  name=$(jq -r .project.name "$lockFile")
-  version=$(jq -r .project.version "$lockFile")
-  jq -e --arg jar "$name-$version.jar" 'any(.outputs[]; (.path | split("/") | last) == $jar)' "$lockFile" >/dev/null ||
-    die "the build of the lock makes no $name-$version.jar to publish"
-  local projectDir
+  local projectDir release state
   projectDir=$(lockProjectDir "$lockFile")
-  release=$(nix-build --no-out-link "$PURIFIER_LIB/release.nix" \
+  state=$(stateOf "$lockFile")
+  mkdir -p "$state"
+  release=$(nix-build --out-link "$state/release" "$PURIFIER_LIB/release.nix" \
     --argstr nixpkgs "$PURIFIER_NIXPKGS" --argstr purifierRef "$PURIFIER_SHARED_REF" \
     --argstr src "$(sourceRootOf "$root" "$projectDir")" --argstr projectDir "$projectDir" \
     --argstr lockFile "$lockFile")
-  jar="$release/$name-$version.jar"
-  pom="$release/$name-$version.pom"
-
-  # deps-deploy runs on the classpath the package resolved from its own
-  # lockfile, so publishing downloads nothing and only uploads.
-  local options="{:installer :remote :sign-releases? false :artifact \"$jar\" :pom-file \"$pom\""
-  if [ -n "$repository" ]; then
-    options="$options :repository {\"${repository%%=*}\" {:url \"${repository#*=}\"}}"
-  fi
-  options="$options}"
-  local expression="(require 'deps-deploy.deps-deploy) (deps-deploy.deps-deploy/deploy $options) (shutdown-agents)"
-  [ -n "$PURIFIER_DEPLOY_CLASSPATH" ] ||
-    die "this clojure-cli-purifier was built without the lockfile of its deploy tool; run clojure-cli-purifier lock in pkgs/clojure-cli-purifier/deploy of its source"
-  if [ $dryRun = 1 ]; then
-    echo "jar: $jar"
-    echo "pom: $pom"
-    echo "deploy: $options"
-    return
-  fi
-  "$JAVA_CMD" -cp "$(cat "$PURIFIER_DEPLOY_CLASSPATH")" clojure.main -e "$expression"
+  [ -n "$PURIFIER_DEPLOY_CLASSPATH" ] || \
+    die "this clojure-cli-purifier was built without its deploy tool lockfile"
+  "$JAVA_CMD" -cp "$(cat "$PURIFIER_DEPLOY_CLASSPATH")" clojure.main \
+    "$PURIFIER_LIB/deploy-projections.clj" "$release/repository" "$release/catalog.json" "$repository" "$dryRun"
 }
 
 # Linked as bin/clojure in a state directory, this script is the Clojure

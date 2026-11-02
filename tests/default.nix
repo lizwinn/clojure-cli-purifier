@@ -121,6 +121,12 @@ let
   };
 in
 {
+  jvm-projection = hello.packages.hello.projections.maven;
+
+  composition = import ./composition.nix {
+    inherit pkgs build;
+    purifier = (pkgs.extend overlay).lib.purifier;
+  };
   inherit cli;
 
   # The functions the lock run uses to read and write files, and the helper

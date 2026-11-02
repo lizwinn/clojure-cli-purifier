@@ -17,12 +17,18 @@ let
   pkgs = import nixpkgs { };
   inherit ((builtins.getFlake purifierRef).lib) purifier;
   build = pkgs.callPackage ./build-clojure-cli-project.nix { inherit purifier; };
-in
-(build {
-  src = builtins.path {
-    path = /. + src;
-    name = "clojure-source";
+  built = build {
+    src = builtins.path {
+      path = /. + src;
+      name = "clojure-source";
+    };
+    lockFile = /. + lockFile;
+    inherit projectDir;
   };
-  lockFile = /. + lockFile;
-  inherit projectDir;
-}).release
+  repository = built.projections.maven;
+in
+pkgs.runCommand "clojure-publication-repository" { } ''
+  mkdir -p $out
+  ln -s ${repository} $out/repository
+  ln -s ${repository.catalog} $out/catalog.json
+''

@@ -75,6 +75,7 @@ let
       {
         nativeBuildInputs = [
           clojure'
+          python3
           jdk
         ];
       }
@@ -94,6 +95,7 @@ writeShellApplication {
   name = "clojure-cli-purifier";
   runtimeInputs = [
     clojure'
+    python3
     jdk
     git
     jq
@@ -107,6 +109,7 @@ writeShellApplication {
   ];
   runtimeEnv = {
     PURIFIER_LIB = ../../nix/lib;
+    PURIFIER_PROJECT_INPUTS_TOOLS = purifier.projectInputsTool;
     PURIFIER_FORMAT = toString (import ../../nix/lib/lock-version.nix);
     PURIFIER_HELPER = ./helper.clj;
     PURIFIER_TOOLS_JAR = "${clojure'}/libexec/clojure-tools-${clojure'.version}.jar";

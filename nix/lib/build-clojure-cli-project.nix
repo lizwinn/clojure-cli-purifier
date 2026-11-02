@@ -77,6 +77,11 @@
   #     narHash = args.hash;
   #   };
   fetchers ? { },
+  # Nix-built JVM projects; native module selection comes from their catalogs.
+  projectDependencies ? purifier.lockedProjectInputs {
+    inputs = (builtins.fromJSON (builtins.readFile lockFile)).projectInputs or [ ];
+    system = stdenvNoCC.hostPlatform.system;
+  },
   # The JDK that runs the Clojure CLI and the project's JVMs.
   jdk ? null,
   # Filters the project root before it is copied into the store, as the
@@ -150,6 +155,12 @@ let
     fetchers = libraryPackages;
     lock = checked;
   };
+  provided = purifier.jvmProjections {
+    repository = null;
+    dependencies = projectDependencies;
+    inherit runCommand python3;
+    name = "clojure-provided-dependencies";
+  };
   gitlibs = callPackage ./gitlibs.nix {
     inherit purifier system;
     fetchers = libraryPackages;
@@ -194,6 +205,14 @@ let
       ++ lib.optional (launchers != [ ]) makeWrapper;
       dontConfigure = true;
       doCheck = check;
+      passthru = lib.optionalAttrs (releaseProblem == null) {
+        projections = purifier.jvmProjections {
+          repository = release;
+          dependencies = projectDependencies;
+          inherit runCommand python3;
+          name = "clojure-jvm-publications";
+        };
+      };
 
       # `clojure-cli-purifier lock` runs the Clojure CLI the same way, so a
       # lock made with it holds what this needs: the local repository and
@@ -213,7 +232,20 @@ let
         # A git dependency that needs preparing is prepared in its checkout,
         # so the checkouts are writable copies.
         cp -rL --no-preserve=mode ${gitlibs}/. "$GITLIBS"
-        echo '{}' >"$TMPDIR/config/deps.edn"
+        ${
+          if projectDependencies == [ ] then
+            ''echo '{}' >"$TMPDIR/config/deps.edn"''
+          else
+            ''
+                  cp -r --remove-destination --no-preserve=mode ${provided.maven}/. "$HOME/.m2/repository"
+                  ${python3}/bin/python ${purifier.jvmRepositoryTool} \
+                    --clojure-config --catalog ${provided.maven.catalog} > "$TMPDIR/config/deps.edn"
+              ${jdk'}/bin/java -cp '${clojure'}/libexec/*' clojure.main \
+                ${purifier.clojureRewriteTool} "$TMPDIR/config/deps.edn" "$PWD"
+              ${jdk'}/bin/java -cp '${clojure'}/libexec/*' clojure.main \
+                ${purifier.clojureRewriteTool} "$TMPDIR/config/deps.edn" "$GITLIBS"
+            ''
+        }
         export CLJ_CONFIG="$TMPDIR/config"
         export CLJ_CACHE="$TMPDIR/cpcache"
         export CLJ_JVM_OPTS="-Duser.home=$HOME -Djava.io.tmpdir=$TMPDIR/java-tmp"
@@ -230,7 +262,26 @@ let
         # lockfile lacks that download, and the message says how to renew
         # it.
         purifierClojure() {
-          if clojure "$@" > >(tee "$TMPDIR/clojure.log") 2>&1; then
+          ${lib.optionalString (projectDependencies != [ ]) ''
+            local -a invocation=("$@")
+            local selected=false
+            local index
+            for (( index=0; index<''${#invocation[@]}; index++ )); do
+              case "''${invocation[$index]}" in
+                -M|-M:*|-X|-X:*|-T:*)
+                  invocation[$index]="''${invocation[$index]}:nix-purifier-project-inputs"
+                  selected=true
+                  break
+                  ;;
+              esac
+            done
+            if ! "$selected"; then
+              invocation=(-A:nix-purifier-project-inputs "''${invocation[@]}")
+            fi
+          ''}
+          if clojure ${
+            if projectDependencies == [ ] then ''"$@"'' else ''"''${invocation[@]}"''
+          } > >(tee "$TMPDIR/clojure.log") 2>&1; then
             return 0
           fi
           if grep -qE 'could not be resolved|Could not transfer|Could not find artifact|Failed to read artifact descriptor|Unable to clone|Network is unreachable' "$TMPDIR/clojure.log"; then
@@ -240,7 +291,7 @@ let
         }
         # Git dependencies that need preparing are prepared for the aliases
         # the lock prepared, as the lock run did.
-        purifierClojure -X:deps prep :aliases ${lib.escapeShellArg "[${lib.concatStringsSep " " lock.prepared}]"}
+        purifierClojure -X:deps prep :aliases ${lib.escapeShellArg "[${lib.concatStringsSep " " (lock.prepared ++ lib.optional (projectDependencies != [ ]) ":nix-purifier-project-inputs")}]"}
       '';
       buildPhase = ''
         runHook preBuild
@@ -263,6 +314,10 @@ let
           cp "$output" "$out/${javaDirectory}/"
         done
         ${lib.optionalString (lock.pom != null) ''
+          ${lib.optionalString (projectDependencies != [ ]) ''
+            ${python3}/bin/python ${purifier.jvmRepositoryTool} \
+              --rewrite-pom ${lib.escapeShellArg lock.pom} --catalog ${provided.maven.catalog}
+          ''}
           cp ${lib.escapeShellArg lock.pom} "$out/${javaDirectory}/${project.name}-${project.version}.pom"
         ''}
         ${lib.concatMapStrings (output: ''
@@ -303,6 +358,12 @@ assert
   clojure'.version == lock.clojureVersion
   || throw "clojure-cli-purifier: the lock was made with Clojure CLI ${lock.clojureVersion}, and this package set has Clojure CLI ${clojure'.version}. Run `clojure-cli-purifier lock` with the clojure-cli-purifier of this package set.";
 {
+  projections = purifier.jvmProjections {
+    repository = release;
+    dependencies = projectDependencies;
+    inherit runCommand python3;
+    name = "clojure-jvm-publications";
+  };
   packages.${project.name} = package;
   tests = build { check = true; };
   inherit release repository gitlibs;
