@@ -65,5 +65,9 @@ pkgs.runCommand "clojure-nix-composition" { passthru = { inherit provider consum
   ${consumer.packages.hello}/bin/hello > result
   grep -qx '{"hello":"Hello, Nix"}' result
   grep -qx '<p>purified</p>' result
+  # Rewriting a foreign descriptor must not alter its archive bytes.
+  clojureJar=$(find ${consumer.projections.maven}/org/clojure/clojure -name '*.jar')
+  cmp ${consumer.repository}/org/clojure/clojure/1.12.3/clojure-1.12.3.jar "$clojureJar"
+  test -n "$(find ${consumer.projections.maven}/local/greet -name '*-nix-*.jar')"
   touch $out
 ''

@@ -208,6 +208,7 @@ let
       passthru = lib.optionalAttrs (releaseProblem == null) {
         projections = purifier.jvmProjections {
           repository = release;
+          runtimeRepository = "${package}/nix-support/runtime";
           dependencies = projectDependencies;
           inherit runCommand python3;
           name = "clojure-jvm-publications";
@@ -296,6 +297,10 @@ let
       buildPhase = ''
         runHook preBuild
         ${clojureCommands lock.build}
+        ${lib.optionalString (releaseProblem == null) ''
+          export PURIFIER_RUNTIME_BASIS="$TMPDIR/runtime-basis.json"
+          purifierClojure -M ${./runtime-basis.clj}
+        ''}
         runHook postBuild
       '';
       checkPhase = ''
@@ -326,6 +331,12 @@ let
         '') launchers}
         runHook postInstall
       '';
+      # Preserve canonical foreign bytes: normalize only our own archives.
+      postFixup = lib.optionalString (releaseProblem == null) ''
+        ${python3}/bin/python ${./export-runtime.py} ${purifier.projectInputsTool} \
+          "$TMPDIR/runtime-basis.json" "$HOME/.m2/repository" ${provided.maven.catalog} \
+          "$out/nix-support" "$out/${javaDirectory}/${project.name}-${project.version}.pom"
+      '';
       meta = {
         description = "${project.group}/${project.name}, built by clojure-cli-purifier";
       }
@@ -352,6 +363,9 @@ let
         mkdir -p $out
         cp ${package}/${javaDirectory}/${releaseJar} $out/
         cp ${package}/${javaDirectory}/${project.name}-${project.version}.pom $out/
+        if [ -d ${package}/nix-support/local-publications ]; then
+          cp -r ${package}/nix-support/local-publications/. $out/
+        fi
       '';
 in
 assert
@@ -360,6 +374,7 @@ assert
 {
   projections = purifier.jvmProjections {
     repository = release;
+    runtimeRepository = "${package}/nix-support/runtime";
     dependencies = projectDependencies;
     inherit runCommand python3;
     name = "clojure-jvm-publications";

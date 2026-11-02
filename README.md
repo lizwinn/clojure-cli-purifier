@@ -115,9 +115,10 @@ For a Nix build definition, the corresponding builder argument is
 `projectDependencies = [ producer.packages.${system}.library ];`. By default,
 the builder reads the inputs recorded in the lock.
 
-Projected repositories use immutable, Nix-derived versions. The purifier's
-publish command deploys those coordinates and supplied dependencies, with
-POM references rewritten so ordinary Maven consumers can resolve them.
+Project components get Nix-derived versions. The publish command exports
+their application dependencies, including local and git libraries, with
+POMs ordinary Maven consumers can use. A generated POM that disagrees with
+the application's native basis fails publication.
 
 ## Building the project with Nix
 
