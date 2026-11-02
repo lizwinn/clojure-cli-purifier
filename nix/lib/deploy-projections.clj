@@ -8,7 +8,8 @@
             DefaultSettingsBuildingRequest]))
 
 (let [[repository catalog target dry-run] *command-line-args*
-      modules (:modules (json/read-str (slurp catalog) :key-fn keyword))
+      description (json/read-str (slurp catalog) :key-fn keyword)
+      modules (or (:publications description) (:modules description))
       [id url] (if (seq target)
                  (str/split target #"=" 2)
                  [(:id deploy/default-repo-settings) (:url deploy/default-repo-settings)])
