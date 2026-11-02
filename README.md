@@ -112,8 +112,10 @@ The flake can lie in the repository of the project or in another one:
 
 ```nix
 {
-  inputs.clojure-cli-purifier.url = "github:nix-purifiers/clojure-cli-purifier";
-  inputs.nixpkgs.follows = "clojure-cli-purifier/nixpkgs";
+  inputs.clojure-cli-purifier.url =
+    "github:nix-purifiers/clojure-cli-purifier";
+  inputs.nixpkgs.follows =
+    "clojure-cli-purifier/nixpkgs";
 
   outputs =
     { nixpkgs, clojure-cli-purifier, ... }:
@@ -121,14 +123,19 @@ The flake can lie in the repository of the project or in another one:
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [ clojure-cli-purifier.overlays.default ];
+        overlays = [
+          clojure-cli-purifier.overlays.default
+        ];
       };
-      project = pkgs.clojure-cli-purifier.buildClojureCliProject {
-        src = ./.;
-      };
+      project =
+        pkgs.clojure-cli-purifier.buildClojureCliProject
+          {
+            src = ./.;
+          };
     in
     {
-      packages.${system}.default = project.packages.hello;
+      packages.${system}.default =
+        project.packages.hello;
       checks.${system}.tests = project.tests;
     };
 }
@@ -305,10 +312,12 @@ with the user's ssh agent, and the locked hash still applies:
 ```nix
 clojure-cli-purifier.buildClojureCliProject {
   src = ./.;
-  fetchers.fetchgit = args: builtins.fetchGit {
-    inherit (args) url rev;
-    narHash = args.hash;
-  };
+  fetchers.fetchgit =
+    args:
+    builtins.fetchGit {
+      inherit (args) url rev;
+      narHash = args.hash;
+    };
 }
 ```
 
